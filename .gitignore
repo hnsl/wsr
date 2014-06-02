@@ -1,0 +1,22 @@
+# Compiled Object files
+*.slo
+*.lo
+*.o
+
+# Compiled Dynamic libraries
+*.so
+
+# Compiled Static libraries
+*.lai
+*.la
+*.a
+
+nbproject
+*.bash
+*.mk
+.dep.inc
+build
+dist
+.last_build
+debug.local
+*~
