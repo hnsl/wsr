@@ -25,7 +25,7 @@ typedef void (*wsr_wss_cb_t)(rio_in_addr4_t peer, rio_t* ws_io, void* cb_arg);
 
 /// An outgoing http response.
 typedef struct wsr_rsp {
-    /// Heap for repsonse.
+    /// Heap for response.
     lwt_heap_t* heap;
     /// Response status code.
     uint16_t status;

@@ -131,11 +131,12 @@ wsr_cfg_t wsr_default_cfg() {
     return cfg;
 }
 
-static void http_reply_raw_body(rio_t* client_h, fstr_t response, fstr_t extra_headers, fstr_t optional_body) {
+static inline void http_reply_raw_body(rio_t* client_h, fstr_t response, fstr_t extra_headers, fstr_t optional_body) {
     fstr_t reply = concs(
         "HTTP/1.1 ",
         response,
-        "\r\nConnection: close\r\nContent-Length: ",
+        "\r\nConnection: close"
+        "\r\nContent-Length: ",
         ui2fs(optional_body.len),
         "\r\nContent-Type: text/html\r\n",
         extra_headers,
@@ -386,7 +387,12 @@ wsr_rsp_t wsr_response_file(wsr_req_t req, fstr_t base_path) { sub_heap {
             // Since we always reply with a chunked stream we explicitly hint the
             // final expected content size so client is aware of the download progress.
             (void) dict_insert(rsp.headers, fstr_t, "content-length", ui2fs(st.size));
-            (void) dict_insert(rsp.headers, fstr_t, "content-type", mime_type);
+            fstr_t content_type = mime_type;
+            if (fstr_equal(mime_type, "text/html") || fstr_equal(mime_type, "text/plain")) {
+                // UTF-8 is the default encoding for text and html files.
+                content_type = concs(mime_type, "; charset=utf-8");
+            }
+            (void) dict_insert(rsp.headers, fstr_t, "content-type", content_type);
             (void) dict_insert(rsp.headers, fstr_t, "etag", fss(import(etag)));
             rsp.body_stream = import(file_h);
         }
