@@ -20,8 +20,9 @@ typedef struct wsr_req {
     dict(fstr_t)* headers;
 } wsr_req_t;
 
-/// Callback for http web socket sessions.
-typedef void (*wsr_wss_cb_t)(rio_in_addr4_t peer, rio_t* ws_io, void* cb_arg);
+/// Callback for http web socket sessions. reader_fid and writer_fid should be used only for
+/// calls to wsr_web_socket_read and wsr_web_socket_write/wsr_web_socket_close, respectively.
+typedef void (*wsr_wss_cb_t)(rio_in_addr4_t peer, rcd_fid_t reader_fid, rcd_fid_t writer_fid, void* cb_arg);
 
 /// An outgoing http response.
 typedef struct wsr_rsp {
@@ -131,6 +132,23 @@ wsr_rsp_t wsr_response_file(wsr_req_t req, fstr_t base_path);
 /// for each connection that calls the configured callback handlers.
 /// This function never returns. Throws io exception on various io failures.
 void wsr_start(wsr_cfg_t cfg);
+
+/// Write a web socket message. Throws io exception if the connection is closed,
+/// i.e. on write error or if the fiber is dead.
+void wsr_web_socket_write(fstr_t data, bool binary, rcd_fid_t writer_fid);
+
+/// Send a close message over a web socket connection, then close the connection.
+/// Throws io exception if the connection is closed.
+void wsr_web_socket_close(uint16_t status_code, fstr_t data, rcd_fid_t writer_fid);
+
+/// Read a web socket message size with <= limit, while simultaneously taking
+/// care to respond to Ping and Close packets. The application should always be
+/// blocked on this function in its default state - otherwise the client may
+/// arbitrarily decide to close the connecion based on inactivity. Throws io
+/// exception if the message read is too large, or if the connection is closed.
+/// If non-null, out_binary will be set to whether the message was in binary
+/// form, rather than text.
+fstr_mem_t* wsr_web_socket_read(size_t limit, rcd_fid_t reader_fid, bool* out_binary);
 
 /// Returns a simple response without a body.
 static inline wsr_rsp_t wsr_response(wsr_status_t status) {
