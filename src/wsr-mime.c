@@ -687,9 +687,7 @@ const fstr_t wsr_mime_zaz = "application/vnd.zzazz.deck+xml";
 
 fstr_t wsr_mime_from_ext(fstr_t ext) { sub_heap {
     {
-        fstr_t ext_l = fss(fstr_cpy(ext));
-        fstr_tolower(ext_l);
-        #pragma ocre2c(ext_l): \
+        #pragma ocre2c(ext): \i \
           ^x3d$ {@m_x3d} \
         | ^3gp$ {@m_3gp} \
         | ^3g2$ {@m_3g2} \
