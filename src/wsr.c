@@ -342,6 +342,10 @@ static void web_socket_fail(rcd_fid_t writer_fid, uint16_t status_code, fstr_t d
     sub_heap_e(throw(concs("failed web socket: ", data), exception_io));
 }
 
+static void unknown_opcode_fail(rcd_fid_t writer_fid, uint8_t opcode) { sub_heap {
+    web_socket_fail(writer_fid, 1002, concs("unknown opcode [", ui2fs(opcode), "]"));
+}}
+
 join_locked(void) web_socket_pong(fstr_t msg, join_server_params, wss_write_arg_t write_arg) {
     assert(msg.len <= 125);
     uint16_t two_bytes = RIO_NBO_SWAP16(0x8A00 | (uint16_t)msg.len);
@@ -421,7 +425,7 @@ join_locked(fstr_mem_t*) web_socket_read(size_t limit, bool* out_binary, join_se
                     } else if (opcode == 10) {
                         // Pong - just ignore.
                     } else {
-                        web_socket_fail(writer_fid, 1002, "unknown opcode");
+                        unknown_opcode_fail(writer_fid, opcode);
                     }
                 }
             } else {
@@ -434,7 +438,7 @@ join_locked(fstr_mem_t*) web_socket_read(size_t limit, bool* out_binary, join_se
                     // Text/Binary.
                     frame_type = opcode;
                 } else {
-                    web_socket_fail(writer_fid, 1002, "unknown opcode");
+                    unknown_opcode_fail(writer_fid, opcode);
                 }
                 if (payload_len > limit - outind)
                     web_socket_fail(writer_fid, 1009, "payload too large");
