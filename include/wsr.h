@@ -143,9 +143,9 @@ void wsr_web_socket_close(uint16_t status_code, fstr_t data, rcd_fid_t writer_fi
 
 /// Read a web socket message size with <= limit, while simultaneously taking
 /// care to respond to Ping and Close packets. The application should always be
-/// blocked on this function in its default state - otherwise the client may
-/// arbitrarily decide to close the connecion based on inactivity. Throws io
-/// exception if the message read is too large, or if the connection is closed.
+/// blocked on this function in its default state, to be able to know when the
+/// connection closes, and to avoid client disconnects due to inactivity.
+/// Throws io exception on too large messages, or if the connection is closed.
 /// If non-null, out_binary will be set to whether the message was in binary
 /// form, rather than text.
 fstr_mem_t* wsr_web_socket_read(size_t limit, rcd_fid_t reader_fid, bool* out_binary);
