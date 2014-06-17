@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<meta charset=utf-8>
+<style>
+#entrybox {
+    font: 20px Georgia;
+}
+#chatbox {
+    font-size: 15px;
+}
+#inputfield {
+    border: 1px solid #333;
+}
+#rows {
+    font-size: 14px;
+    font-family: monospace;
+    white-space: pre-wrap;
+    height: 500px;
+    border: 1px solid #ccc;
+    overflow-x: hidden;
+}
+.chatrow:not(:last-child) {
+    border-bottom: 1px solid #ccc;
+}
+.chatrow.info {
+    color: gray;
+}
+.chatrow.error {
+    color: red;
+}
+#chatbox {
+    width: 700px;
+    height: 100%;
+}
+body, html {
+    height: 100%;
+    margin: 0;
+}
+</style>
+<script>
+ws = null;
+names = {};
+myName = null;
+PadLen = 7;
+function add(msg, cl) {
+    var row = document.createElement("div");
+    row.textContent = msg;
+    row.classList.add("chatrow");
+    if (cl)
+        row.classList.add(cl);
+    rows.appendChild(row);
+    rows.scrollTop = rows.scrollHeight;
+}
+function fromUtf8(data) {
+    return decodeURIComponent(escape(data));
+}
+function toUtf8(msg) {
+    return unescape(encodeURIComponent(msg));
+}
+function repeat(s, n) {
+    var ret = "";
+    for (var i = 0; i < n; ++i)
+        ret += s;
+    return ret;
+}
+function rec(data) {
+    var type = data[0];
+    var id = data.substr(1, 8);
+    if (type === "m") {
+        var name = names[id];
+        var msg = fromUtf8(data.substr(9));
+        add(name + ": " + repeat(" ", Math.max(0, PadLen - name.length)) + msg);
+    } else if (type === "c") {
+        var name = fromUtf8(data.substr(9));
+        names[id] = name;
+        add(name + " entered the chat.", "info");
+    } else if (type === "d") {
+        var name = names[id];
+        delete names[id];
+        add(name + " left the chat.", "info");
+    } else {
+        add("Unknown message: " + data, "error");
+    }
+}
+function errorscreen(e) {
+    if (e && e.reason)
+        entrybox.innerHTML = "Connection dropped (" + e.reason + ").";
+    else
+        entrybox.innerHTML = "Connection dropped.";
+    entrybox.hidden = false;
+    chatbox.hidden = true;
+}
+function send(msg) {
+    add(myName + ": " + repeat(" ", Math.max(0, PadLen - myName.length)) + msg, "me");
+    ws.send(new Blob([msg]));
+}
+function login(name) {
+    myName = name;
+    login = function() {};
+    ws = new WebSocket("ws://" + location.host + "/chat");
+    ws.onerror = errorscreen;
+    ws.onclose = errorscreen;
+    ws.onopen = function() {
+        entrybox.hidden = true;
+        chatbox.hidden = false;
+        add("Welcome to the chat!", "info");
+        inputfield.focus();
+        ws.send(new Blob([name]));
+    };
+    ws.onmessage = function(ev) {
+        var reader = new FileReader();
+        reader.onloadend = function() {
+            rec(reader.result);
+        };
+        reader.readAsBinaryString(ev.data);
+    };
+}
+</script>
+<div id=entrybox>
+<form onsubmit="login(nameinp.value); return false;">
+Your name: <input id=nameinp autofocus>
+</form>
+</div>
+<div id=chatbox hidden>
+<div id=rows></div>
+<form onsubmit="event.preventDefault(); send(inputfield.value); inputfield.value = '';">
+<input id="inputfield">
+</form>
+</div>

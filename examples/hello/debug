@@ -1,0 +1,107 @@
+file build/hello.debug
+echo Welcome to librcd debugging mode!\n
+
+# Enables GDB to detect threads as they are started.
+break lwt_physical_executor_thread if 0
+
+# Pagination MUST be turned off to avoid race that crashes the debugged program
+# as gdb injects breakpoints to invalid addresses which corrupts the memory.
+set pagination off
+
+# We use SIGUSR1 to detect new threads.
+handle SIGUSR1 nostop print pass
+
+# Realtime signal 33 is used for canceling threads - don't catch it.
+handle SIG33 nostop noprint pass
+
+# Stop if the application throws SIGABRT (e.g. in abort())
+handle SIGABRT stop print nopass
+
+# Following the __releasestack logic when stepping out of a function is rarely interesting. This quickly skips over that part.
+define bs
+    tbreak setjmp.s:113
+    commands
+    silent
+        step
+    end
+    cont
+end
+
+# Replacement for printing backtraces in segmented stack contexts as gdb does not understand those at all.
+define bt
+    echo
+    set $_backtrace_rbp = $rbp
+    call lwt_debug_dump_backtrace($_backtrace_rbp, $rip)
+end
+
+# Shorter command for dumping all fibers.
+define bf
+    echo
+    call lwt_debug_dump_all_fibers()
+end
+
+define sl
+    set scheduler-locking on
+end
+
+define sloff
+    set scheduler-locking off
+end
+
+# Allow attaching on oc-init daemon forks between these two hooks.
+set follow-fork-mode parent
+set detach-on-fork on
+set follow-exec-mode new
+set schedule-multiple on
+
+# Massively ugly but necessary hack that allows gdb to attach to inferiors
+# without crashing and also prevents gdb from attaching to any other inferiors
+# than the daemons jinit is spawning.
+break spawn_locked_enter_hook
+commands
+silent
+echo entering inferior spawn!
+set detach-on-fork off
+set schedule-multiple off
+set scheduler-locking on
+tbreak rio_pipe_close_end
+commands
+    silent
+    echo exiting inferior spawn!
+    set detach-on-fork on
+    set schedule-multiple on
+    set scheduler-locking off
+    cont
+end
+cont
+end
+
+# We use this environment variable to notify jlib that we are traced by
+# gdb and that SIGINT should break the program and not terminate it.
+set environment JENV_IS_GDB_TRACED true
+
+set breakpoint pending on
+
+# Your local gdb setup is stored in debug.local. Should contain something like:
+# set args jhost dev0 : jhttp : jssh : jstore : uplog
+# source debug.local
+
+# Start debugging.
+break abort
+break __assert_fail
+
+break __lwthreads_main
+commands
+silent
+call lwt_debug_choke_fibers(1)
+printf "NOTICE: Choking all but a single thread to not confuse gdb. To enable multi threaded execution, enter: call lwt_debug_choke_fibers(0)\n"
+cont
+end
+
+###### ADDITIONAL DEBUG COMMANDS START ######
+
+
+
+###### ADDITIONAL DEBUG COMMANDS STOP ######
+
+run

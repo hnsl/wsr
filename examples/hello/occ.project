@@ -1,0 +1,40 @@
+{
+	"type": "c",
+	"preprocessor": "rcd-pp",
+	"compiler": "rcd-i2o",
+	"project-linker": "rcd-pl",
+	"pkg-config": [],
+	"installdir": "",
+	"dependencies": [
+		"librcd",
+		"wsr"
+	],
+	"general-flags": [
+		"-nostdlib",
+		"-g",
+		"-std=c99",
+		"-Werror"
+	],
+	"pp-flags": [
+		"-nostdinca"
+	],
+	"o-flags": ["-mno-red-zone"],
+	"o-env": {},
+	"additional-src-dirs": [],
+	"include": [],
+	"build-masks": {
+		"debug": {
+			"output": "hello.debug",
+			"pp-flags": [
+				"-DDEBUG"
+			]
+		},
+		"release": {
+			"output": "hello",
+			"o-flags": ["-O1 -fno-omit-frame-pointer"],
+			"o-env": {
+				"LLC_ARGS": "-O1"
+			}
+		}
+	}
+}

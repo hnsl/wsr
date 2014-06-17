@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<meta charset=utf-8>
+<style>
+#rows {
+    font-size: 12px;
+    font-family: monospace;
+    white-space: pre;
+}
+#rows > div {
+    border-bottom: 1px solid #ccc;
+}
+</style>
+<div id="rows"></div>
+<script>
+function add(msg) {
+    var row = document.createElement("div");
+    row.textContent = msg;
+    rows.appendChild(row);
+}
+ws = new WebSocket("ws://" + location.host + "/echo");
+ws.onmessage = function(ev) {
+    add("<<< " + ev.data);
+};
+ws.onclose = function(ev) {
+    add("<closed: " + ev.code + " \"" + ev.reason + "\">" + (ev.wasClean ? " (clean)" : " (unclean)"));
+};
+ws.onopen = function() {
+    add("<opened>");
+};
+ws.onerror = function() {
+    add("<error>");
+};
+function send(msg) {
+    add(">>> " + msg);
+    ws.send(msg);
+}
+function closeit(msg) {
+    var parts = msg.split(",");
+    if (parts.length == 2) {
+        var code = +parts[0], reason = parts[1];
+        add("* closing with " + code + ": " + reason);
+        ws.close(code, reason);
+    } else {
+        add("* closing");
+        ws.close();
+    }
+}
+</script>
+<form onsubmit="event.preventDefault(); send(input.value);">
+<input type="input" id="input"><input type="submit" value="send"><br>
+<input type="button" onclick="event.preventDefault(); closeit(input.value)" value="close">
+</form>
