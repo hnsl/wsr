@@ -17,7 +17,7 @@ function add(msg) {
     row.textContent = msg;
     rows.appendChild(row);
 }
-ws = new WebSocket("ws://" + location.host + "/echo");
+ws = new WebSocket("ws://" + location.host + "/echo_json");
 ws.onmessage = function(ev) {
     add("<<< " + ev.data);
 };
@@ -47,6 +47,6 @@ function closeit(msg) {
 }
 </script>
 <form onsubmit="event.preventDefault(); send(input.value);">
-<input type="input" id="input"><input type="submit" value="send"><br>
+Write some JSON: <input type="input" id="input" autofocus><input type="submit" value="send"><br>
 <input type="button" onclick="event.preventDefault(); closeit(input.value)" value="close">
 </form>
