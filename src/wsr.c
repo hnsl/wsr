@@ -647,7 +647,7 @@ wsr_rsp_t wsr_response_file(wsr_req_t req, fstr_t base_path) { sub_heap {
             // final expected content size so client is aware of the download progress.
             (void) dict_insert(rsp.headers, fstr_t, "content-length", ui2fs(st.size));
             fstr_t content_type = mime_type;
-            if (fstr_equal(mime_type, "text/html") || fstr_equal(mime_type, "text/plain")) {
+            if (fstr_equal(mime_type, wsr_mime_html) || fstr_equal(mime_type, wsr_mime_txt)) {
                 // UTF-8 is the default encoding for text and html files.
                 content_type = concs(mime_type, "; charset=utf-8");
             }
