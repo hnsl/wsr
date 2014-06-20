@@ -9,7 +9,7 @@ fstr_t web_root;
 
 typedef struct chat_participant {
     fstr_t name;
-    rcd_fid_t writer_fid;
+    fid(wssw) writer_fid;
 } chat_participant_t;
 
 typedef struct chat {
@@ -39,7 +39,7 @@ join_locked(void) chat_send(uint64_t id, fstr_t msg, join_server_params, chat_t*
     }
 }}
 
-join_locked(uint64_t) chat_connect(fstr_t name, rcd_fid_t writer_fid, join_server_params, chat_t* chat) { server_heap_flip {
+join_locked(uint64_t) chat_connect(fstr_t name, fid(wssw) writer_fid, join_server_params, chat_t* chat) { server_heap_flip {
     uint64_t id = chat->next_id++;
     chat_participant_t new_part = {
         .writer_fid = writer_fid,
@@ -77,16 +77,15 @@ join_locked(void) chat_disconnect(uint64_t id, join_server_params, chat_t* chat)
     }
 }}
 
-static void ws_chat(rio_in_addr4_t peer, rcd_fid_t reader_fid, rcd_fid_t writer_fid, void* cb_arg) {
+static void ws_chat(rio_in_addr4_t peer, sf(wssr)* reader_sf, sf(wssw)* writer_sf, void* cb_arg) {
     req_arg_t* req_arg = cb_arg;
     rcd_fid_t chat_fid = req_arg->chat_fid;
-    fstr_t name = fss(wsr_web_socket_read(0x100, reader_fid, 0));
-    fstr_t fiber_name = fss(rio_serial_in_addr4(peer));
-    uint64_t my_id = chat_connect(name, writer_fid, chat_fid);
+    fstr_t name = fss(wsr_web_socket_read(0x100, wssr_sf2id(reader_sf), 0));
+    uint64_t my_id = chat_connect(name, wssw_sf2id(writer_sf), chat_fid);
     try {
         for (;;) sub_heap {
             bool binary;
-            fstr_t msg = fss(wsr_web_socket_read(0x1000, reader_fid, &binary));
+            fstr_t msg = fss(wsr_web_socket_read(0x1000, wssr_sf2id(reader_sf), &binary));
             if (!binary)
                 throw("expected binary message, got text", exception_io);
             chat_send(my_id, msg, chat_fid);
@@ -104,7 +103,7 @@ fiber_main chat_fiber(fiber_main_attr) {
     auto_accept_join(chat_send, chat_connect, chat_disconnect, join_server_params, &chat);
 }
 
-static void ws_fail(rcd_fid_t writer_fid, fstr_t msg) {
+static void ws_fail(fid(wssw) writer_fid, fstr_t msg) {
     wsr_web_socket_close(1008, msg, writer_fid);
     sub_heap_e(throw(concs("failed web socket: ", msg), exception_io));
 }
@@ -153,7 +152,9 @@ static void frobnicate(json_value_t* val) {
     }
 }
 
-static void ws_echo_json(rio_in_addr4_t peer, rcd_fid_t reader_fid, rcd_fid_t writer_fid, void* cb_arg) {
+static void ws_echo_json(rio_in_addr4_t peer, sf(wssr)* reader_sf, sf(wssw)* writer_sf, void* cb_arg) {
+    fid(wssr) reader_fid = wssr_sf2id(reader_sf);
+    fid(wssw) writer_fid = wssw_sf2id(writer_sf);
     for (;;) { sub_heap {
         bool binary;
         fstr_t msg = fss(wsr_web_socket_read(0x10000, reader_fid, &binary));
@@ -173,11 +174,11 @@ static void ws_echo_json(rio_in_addr4_t peer, rcd_fid_t reader_fid, rcd_fid_t wr
     }}
 }
 
-static void ws_echo(rio_in_addr4_t peer, rcd_fid_t reader_fid, rcd_fid_t writer_fid, void* cb_arg) {
+static void ws_echo(rio_in_addr4_t peer, sf(wssr)* reader_sf, sf(wssw)* writer_sf, void* cb_arg) {
     for (;;) { sub_heap {
         bool binary;
-        fstr_t msg = fss(wsr_web_socket_read(0x10000, reader_fid, &binary));
-        wsr_web_socket_write(msg, binary, writer_fid);
+        fstr_t msg = fss(wsr_web_socket_read(0x10000, wssr_sf2id(reader_sf), &binary));
+        wsr_web_socket_write(msg, binary, wssw_sf2id(writer_sf));
     }}
 }
 
