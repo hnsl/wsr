@@ -314,14 +314,9 @@ static wss_cb_arg_t http_session(rio_t* client_h, wsr_cfg_t cfg) {
     }
 }
 
-typedef struct wss_write_arg {
-    rio_t* client_w;
-    rcd_fid_t reader_fid;
-} wss_write_arg_t;
-
 typedef struct wss_read_arg {
     rio_t* client_r;
-    rcd_fid_t writer_fid;
+    fid(wssw) writer_fid;
 } wss_read_arg_t;
 
 static void web_socket_read_masked(rio_t* client_r, fstr_t buf, uint8_t mask[4]) {
@@ -337,238 +332,219 @@ static void web_socket_read_masked(rio_t* client_r, fstr_t buf, uint8_t mask[4])
         buf.str[i] ^= mask[i & 3];
 }
 
-static void web_socket_fail(rcd_fid_t writer_fid, uint16_t status_code, fstr_t data) {
+static void web_socket_fail(fid(wssw) writer_fid, uint16_t status_code, fstr_t data) {
     wsr_web_socket_close(status_code, data, writer_fid);
     sub_heap_e(throw(concs("failed web socket: ", data), exception_io));
 }
 
-static void unknown_opcode_fail(rcd_fid_t writer_fid, uint8_t opcode) { sub_heap {
+static void unknown_opcode_fail(fid(wssw) writer_fid, uint8_t opcode) { sub_heap {
     web_socket_fail(writer_fid, 1002, concs("unknown opcode [", ui2fs(opcode), "]"));
 }}
 
-join_locked(void) web_socket_pong(fstr_t msg, join_server_params, wss_write_arg_t write_arg) {
+join_locked(void) web_socket_pong(fstr_t msg, join_server_params, rio_t* client_w) {
     assert(msg.len <= 125);
     uint16_t two_bytes = RIO_NBO_SWAP16(0x8A00 | (uint16_t)msg.len);
-    rio_t* client_w = write_arg.client_w;
     rio_write(client_w, FSTR_PACK(two_bytes));
     rio_write(client_w, msg);
 }
 
 join_locked(fstr_mem_t*) web_socket_read(size_t limit, bool* out_binary, join_server_params, wss_read_arg_t read_arg) { sub_heap {
-    try {
-        rio_t* client_r = read_arg.client_r;
-        rcd_fid_t writer_fid = read_arg.writer_fid;
-        fstr_mem_t* out = fstr_alloc(limit);
-        size_t outind = 0;
-        int frame_type = -1;
-        for (;;) {
-            // Read frame header.
-            uint16_t two_bytes_nbo;
-            rio_read_fill(client_r, FSTR_PACK(two_bytes_nbo));
-            uint16_t two_bytes = RIO_NBO_SWAP16(two_bytes_nbo);
-            bool fin = (two_bytes & 0x8000) != 0;
-            uint16_t reserved = (two_bytes & 0x7000) >> 12;
-            uint8_t opcode = (two_bytes & 0xf00) >> 8;
-            bool mask_bit = (two_bytes & 0x80) != 0;
-            size_t payload_len = two_bytes & 0x7f;
-            if (payload_len == 126) {
-                uint16_t payload_len16_nbo;
-                rio_read_fill(client_r, FSTR_PACK(payload_len16_nbo));
-                payload_len = RIO_NBO_SWAP16(payload_len16_nbo);
-            } else if (payload_len == 127) {
-                uint16_t payload_len64_nbo;
-                rio_read_fill(client_r, FSTR_PACK(payload_len64_nbo));
-                payload_len = RIO_NBO_SWAP64(payload_len64_nbo);
-            }
-            uint8_t mask[4];
-            if (mask_bit) {
-                rio_read_fill(client_r, FSTR_PACK(mask));
-            } else {
-                web_socket_fail(writer_fid, 1002, "missing mask");
-            }
-            if (reserved != 0)
-                web_socket_fail(writer_fid, 1002, "unsupported extension");
-            // Handle the frame.
-            if (opcode >= 8) {
-                // Control frame.
-                if (payload_len > 125)
-                    web_socket_fail(writer_fid, 1002, "control frame payload too large");
-                if (!fin)
-                    web_socket_fail(writer_fid, 1002, "fragmented control frame");
-                sub_heap {
-                    fstr_t buf = fss(fstr_alloc(payload_len));
-                    web_socket_read_masked(client_r, buf, mask);
-                    if (opcode == 8) {
-                        // Close - respond with the same thing and close the connection.
-                        if (payload_len == 1)
-                            web_socket_fail(writer_fid, 1002, "invalid close reason");
-                        uint16_t status_code;
-                        fstr_t close_reason;
-                        if (payload_len == 0) {
-                            status_code = 1005;
-                            close_reason = "";
-                        } else {
-                            fstr_cpy_over(FSTR_PACK(status_code), buf, 0, 0);
-                            status_code = RIO_NBO_SWAP16(status_code);
-                            close_reason = fstr_slice(buf, 2, buf.len);
-                        }
-                        wsr_web_socket_close(status_code, close_reason, writer_fid);
-                        sub_heap {
-                            fstr_t reason = "client closed web socket";
-                            if (close_reason.len != 0)
-                                reason = concs(reason, ": ", close_reason);
-                            throw(reason, exception_io);
-                        }
-                    } else if (opcode == 9) {
-                        // Ping.
-                        web_socket_pong(buf, writer_fid);
-                    } else if (opcode == 10) {
-                        // Pong - just ignore.
+    rio_t* client_r = read_arg.client_r;
+    fid(wssw) writer_fid = read_arg.writer_fid;
+    fstr_mem_t* out = fstr_alloc(limit);
+    size_t outind = 0;
+    int frame_type = -1;
+    for (;;) {
+        // Read frame header.
+        uint16_t two_bytes_nbo;
+        rio_read_fill(client_r, FSTR_PACK(two_bytes_nbo));
+        uint16_t two_bytes = RIO_NBO_SWAP16(two_bytes_nbo);
+        bool fin = (two_bytes & 0x8000) != 0;
+        uint16_t reserved = (two_bytes & 0x7000) >> 12;
+        uint8_t opcode = (two_bytes & 0xf00) >> 8;
+        bool mask_bit = (two_bytes & 0x80) != 0;
+        size_t payload_len = two_bytes & 0x7f;
+        if (payload_len == 126) {
+            uint16_t payload_len16_nbo;
+            rio_read_fill(client_r, FSTR_PACK(payload_len16_nbo));
+            payload_len = RIO_NBO_SWAP16(payload_len16_nbo);
+        } else if (payload_len == 127) {
+            uint16_t payload_len64_nbo;
+            rio_read_fill(client_r, FSTR_PACK(payload_len64_nbo));
+            payload_len = RIO_NBO_SWAP64(payload_len64_nbo);
+        }
+        uint8_t mask[4];
+        if (mask_bit) {
+            rio_read_fill(client_r, FSTR_PACK(mask));
+        } else {
+            web_socket_fail(writer_fid, 1002, "missing mask");
+        }
+        if (reserved != 0)
+            web_socket_fail(writer_fid, 1002, "unsupported extension");
+        // Handle the frame.
+        if (opcode >= 8) {
+            // Control frame.
+            if (payload_len > 125)
+                web_socket_fail(writer_fid, 1002, "control frame payload too large");
+            if (!fin)
+                web_socket_fail(writer_fid, 1002, "fragmented control frame");
+            sub_heap {
+                fstr_t buf = fss(fstr_alloc(payload_len));
+                web_socket_read_masked(client_r, buf, mask);
+                if (opcode == 8) {
+                    // Close - respond with the same thing and close the connection.
+                    if (payload_len == 1)
+                        web_socket_fail(writer_fid, 1002, "invalid close reason");
+                    uint16_t status_code;
+                    fstr_t close_reason;
+                    if (payload_len == 0) {
+                        status_code = 1005;
+                        close_reason = "";
                     } else {
-                        unknown_opcode_fail(writer_fid, opcode);
+                        fstr_cpy_over(FSTR_PACK(status_code), buf, 0, 0);
+                        status_code = RIO_NBO_SWAP16(status_code);
+                        close_reason = fstr_slice(buf, 2, buf.len);
                     }
-                }
-            } else {
-                // Data frame.
-                if (opcode == 0) {
-                    // Continuation.
-                    if (frame_type == -1)
-                        web_socket_fail(writer_fid, 1002, "first frame is a continuation frame");
-                } else if (opcode == 1 || opcode == 2) {
-                    // Text/Binary.
-                    frame_type = opcode;
+                    wsr_web_socket_close(status_code, close_reason, writer_fid);
+                    sub_heap {
+                        fstr_t reason = "client closed web socket";
+                        if (close_reason.len != 0)
+                            reason = concs(reason, ": ", close_reason);
+                        throw(reason, exception_io);
+                    }
+                } else if (opcode == 9) {
+                   // Ping.
+                    web_socket_pong(buf, writer_fid.fid);
+                } else if (opcode == 10) {
+                    // Pong - just ignore.
                 } else {
                     unknown_opcode_fail(writer_fid, opcode);
                 }
-                if (payload_len > limit - outind)
-                    web_socket_fail(writer_fid, 1009, "payload too large");
-                fstr_t buf = fstr_slice(fss(out), outind, outind + payload_len);
-                outind += payload_len;
-                web_socket_read_masked(client_r, buf, mask);
-                if (fin)
-                    break;
             }
+        } else {
+            // Data frame.
+            if (opcode == 0) {
+                // Continuation.
+                if (frame_type == -1)
+                    web_socket_fail(writer_fid, 1002, "first frame is a continuation frame");
+            } else if (opcode == 1 || opcode == 2) {
+                // Text/Binary.
+                frame_type = opcode;
+            } else {
+                unknown_opcode_fail(writer_fid, opcode);
+            }
+            if (payload_len > limit - outind)
+                web_socket_fail(writer_fid, 1009, "payload too large");
+            fstr_t buf = fstr_slice(fss(out), outind, outind + payload_len);
+            outind += payload_len;
+            web_socket_read_masked(client_r, buf, mask);
+            if (fin)
+                break;
         }
-        if (out_binary != 0)
-            *out_binary = (frame_type == 2);
-        out->len = outind;
-        return escape(out);
-    } catch(exception_io, e) {
-        lwt_cancel_fiber_id(server_fiber_id);
-        lwt_throw_exception(e);
     }
+    if (out_binary != 0)
+        *out_binary = (frame_type == 2);
+    out->len = outind;
+    return escape(out);
 }}
 
-fstr_mem_t* wsr_web_socket_read(size_t limit, rcd_fid_t reader_fid, bool* out_binary) {
+fstr_mem_t* wsr_web_socket_read(size_t limit, fid(wssr) reader_fid, bool* out_binary) {
     try {
-        return web_socket_read(limit, out_binary, reader_fid);
-    } catch(exception_inner_join_fail, e) {
+        return web_socket_read(limit, out_binary, reader_fid.fid);
+    } catch (exception_inner_join_fail, e) {
         throw_fwd("web socket reader already closed", exception_io, e);
     }
 }
 
-join_locked(void) web_socket_write(fstr_t data, bool binary, join_server_params, wss_write_arg_t write_arg) {
+join_locked(void) web_socket_write(fstr_t data, bool binary, join_server_params, rio_t* client_w) {
+    uint8_t buf[10];
+    fstr_t header;
+    header.len = 2;
+    header.str = buf;
+    uint16_t payload1;
+    if (data.len <= 125) {
+        payload1 = data.len;
+    } else if (data.len < 0x10000) {
+        payload1 = 126;
+        header.len += 2;
+        uint16_t len = (uint16_t)data.len;
+        len = RIO_NBO_SWAP16(len);
+        fstr_cpy_over(fstr_slice(header, 2, 4), FSTR_PACK(len), 0, 0);
+    } else {
+        payload1 = 127;
+        header.len += 8;
+        uint64_t len = (uint64_t)data.len;
+        len = RIO_NBO_SWAP64(len);
+        fstr_cpy_over(fstr_slice(header, 2, 10), FSTR_PACK(len), 0, 0);
+    }
+    uint16_t opcode = binary? 2: 1;
+    uint16_t fin = 0x8000;
+    uint16_t two_bytes = fin | (opcode << 8) | payload1;
+    two_bytes = RIO_NBO_SWAP16(two_bytes);
+    fstr_cpy_over(fstr_slice(header, 0, 2), FSTR_PACK(two_bytes), 0, 0);
+    rio_write(client_w, header);
+    rio_write(client_w, data);
+}
+
+void wsr_web_socket_write(fstr_t data, bool binary, fid(wssw) writer_fid) {
     try {
-        rio_t* client_w = write_arg.client_w;
-        uint8_t buf[10];
-        fstr_t header;
-        header.len = 2;
-        header.str = buf;
-        uint16_t payload1;
-        if (data.len <= 125) {
-            payload1 = data.len;
-        } else if (data.len < 0x10000) {
-            payload1 = 126;
-            header.len += 2;
-            uint16_t len = (uint16_t)data.len;
-            len = RIO_NBO_SWAP16(len);
-            fstr_cpy_over(fstr_slice(header, 2, 4), FSTR_PACK(len), 0, 0);
-        } else {
-            payload1 = 127;
-            header.len += 8;
-            uint64_t len = (uint64_t)data.len;
-            len = RIO_NBO_SWAP64(len);
-            fstr_cpy_over(fstr_slice(header, 2, 10), FSTR_PACK(len), 0, 0);
-        }
-        uint16_t opcode = binary? 2: 1;
-        uint16_t fin = 0x8000;
-        uint16_t two_bytes = fin | (opcode << 8) | payload1;
-        two_bytes = RIO_NBO_SWAP16(two_bytes);
-        fstr_cpy_over(fstr_slice(header, 0, 2), FSTR_PACK(two_bytes), 0, 0);
-        rio_write(client_w, header);
+        web_socket_write(data, binary, writer_fid.fid);
+    } catch (exception_inner_join_fail, e) {
+        throw_fwd("web socket writer already closed", exception_io, e);
+    }
+}
+
+join_locked(void) web_socket_close(uint16_t status_code, fstr_t data, join_server_params, rio_t* client_w) {
+    assert(data.len <= 123);
+    uint16_t str_len = (uint16_t)data.len;
+    uint16_t two_bytes = 0x8800 | (str_len == 0? 0: str_len + 2);
+    two_bytes = RIO_NBO_SWAP16(two_bytes);
+    rio_write(client_w, FSTR_PACK(two_bytes));
+    if (str_len != 0) {
+        status_code = RIO_NBO_SWAP16(status_code);
+        rio_write(client_w, FSTR_PACK(status_code));
         rio_write(client_w, data);
-    } catch(exception_io, e) {
-        lwt_cancel_fiber_id(write_arg.reader_fid);
-        lwt_throw_exception(e);
     }
 }
 
-void wsr_web_socket_write(fstr_t data, bool binary, rcd_fid_t writer_fid) {
+void wsr_web_socket_close(uint16_t status_code, fstr_t data, fid(wssw) writer_fid) {
     try {
-        web_socket_write(data, binary, writer_fid);
-    } catch(exception_inner_join_fail, e) {
+        web_socket_close(status_code, data, writer_fid.fid);
+    } catch (exception_inner_join_fail, e) {
         throw_fwd("web socket writer already closed", exception_io, e);
     }
 }
 
-join_locked(void) web_socket_close(uint16_t status_code, fstr_t data, join_server_params, wss_write_arg_t write_arg) {
-    try {
-        assert(data.len <= 123);
-        rio_t* client_w = write_arg.client_w;
-        uint16_t str_len = (uint16_t)data.len;
-        uint16_t two_bytes = 0x8800 | (str_len == 0? 0: str_len + 2);
-        two_bytes = RIO_NBO_SWAP16(two_bytes);
-        rio_write(client_w, FSTR_PACK(two_bytes));
-        if (str_len != 0) {
-            status_code = RIO_NBO_SWAP16(status_code);
-            rio_write(client_w, FSTR_PACK(status_code));
-            rio_write(client_w, data);
-        }
-    } finally {
-        lwt_cancel_fiber_id(write_arg.reader_fid);
-    }
-}
-
-void wsr_web_socket_close(uint16_t status_code, fstr_t data, rcd_fid_t writer_fid) {
-    try {
-        web_socket_close(status_code, data, writer_fid);
-    } catch(exception_inner_join_fail, e) {
-        throw_fwd("web socket writer already closed", exception_io, e);
-    }
-}
-
-fiber_main web_socket_writer(fiber_main_attr, wss_write_arg_t write_arg) { try {
-    auto_accept_join(web_socket_write, web_socket_pong, web_socket_close, join_server_params, write_arg);
+fiber_main_t(wssw) web_socket_writer(fiber_main_attr, rio_t* client_w) { try {
+    auto_accept_join(web_socket_write, web_socket_pong, web_socket_close, join_server_params, client_w);
 } catch (exception_desync, e); }
 
-fiber_main web_socket_reader(fiber_main_attr, wss_read_arg_t read_arg) { try {
+fiber_main_t(wssr) web_socket_reader(fiber_main_attr, wss_read_arg_t read_arg) { try {
     auto_accept_join(web_socket_read, join_server_params, read_arg);
 } catch (exception_desync, e); }
 
 static void web_socket_session(rio_t* client_h, wss_cb_arg_t wss_cb) { sub_heap {
-    rio_in_addr4_t peer = rio_get_socket_address(client_h, true);
-    fstr_t fiber_name = fss(rio_serial_in_addr4(peer));
-    rio_t *client_r, *client_w;
-    rio_realloc_split(client_h, &client_r, &client_w);
-    rcd_fid_t reader_fid, writer_fid;
-    fmitosis {
-        reader_fid = new_fid;
+    rio_in_addr4_t peer;
+    sf(wssw)* writer_sf;
+    sf(wssr)* reader_sf;
+    sub_heap {
+        peer = rio_get_socket_address(client_h, true);
+        fstr_t fiber_name = fss(rio_serial_in_addr4(peer));
+        rio_t *client_r, *client_w;
+        rio_realloc_split(client_h, &client_r, &client_w);
         fmitosis {
-            wss_write_arg_t write_arg = {
-                .client_w = import(client_w),
-                .reader_fid = reader_fid,
-            };
-            writer_fid = sfid(spawn_fiber(web_socket_writer(fiber_name, write_arg)));
+            writer_sf = spawn_fiber(web_socket_writer(fiber_name, import(client_w)));
         }
-        wss_read_arg_t read_arg = {
-            .client_r = import(client_r),
-            .writer_fid = writer_fid,
-        };
-        spawn_fiber(web_socket_reader(fiber_name, read_arg));
-        // TODO set up a timer and make sure attackers can't force us to hang on to memory
+        fmitosis {
+            wss_read_arg_t read_arg = {
+                .client_r = import(client_r),
+                .writer_fid = sf2id(wssw, writer_sf),
+            };
+            reader_sf = spawn_fiber(web_socket_reader(fiber_name, read_arg));
+        }
+        escape_list(writer_sf, reader_sf);
     }
-    wss_cb.wss_cb(peer, reader_fid, writer_fid, wss_cb.cb_arg);
-    wsr_web_socket_close(1000, "bye", writer_fid);
+    wss_cb.wss_cb(peer, reader_sf, writer_sf, wss_cb.cb_arg);
 }}
 
 fiber_main http_connection_fiber(fiber_main_attr, rio_t* client_h, wsr_cfg_t cfg) { try {

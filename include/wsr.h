@@ -20,9 +20,12 @@ typedef struct wsr_req {
     dict(fstr_t)* headers;
 } wsr_req_t;
 
+decl_fid_t(wssr);
+decl_fid_t(wssw);
+
 /// Callback for http web socket sessions. reader_fid and writer_fid should be used only for
 /// calls to wsr_web_socket_read and wsr_web_socket_write/wsr_web_socket_close, respectively.
-typedef void (*wsr_wss_cb_t)(rio_in_addr4_t peer, rcd_fid_t reader_fid, rcd_fid_t writer_fid, void* cb_arg);
+typedef void (*wsr_wss_cb_t)(rio_in_addr4_t peer, sf(wssr)* reader_sf, sf(wssw)* writer_sf, void* cb_arg);
 
 /// An outgoing http response.
 typedef struct wsr_rsp {
@@ -133,13 +136,12 @@ wsr_rsp_t wsr_response_file(wsr_req_t req, fstr_t base_path);
 /// This function never returns. Throws io exception on various io failures.
 void wsr_start(wsr_cfg_t cfg);
 
-/// Write a web socket message. Throws io exception if the connection is closed,
-/// i.e. on write error or if the fiber is dead.
-void wsr_web_socket_write(fstr_t data, bool binary, rcd_fid_t writer_fid);
+/// Write a web socket message. Throws io exception.
+void wsr_web_socket_write(fstr_t data, bool binary, fid(wssw) writer_fid);
 
 /// Send a close message over a web socket connection, then close the connection.
-/// Throws io exception if the connection is closed.
-void wsr_web_socket_close(uint16_t status_code, fstr_t data, rcd_fid_t writer_fid);
+/// Throws io exception.
+void wsr_web_socket_close(uint16_t status_code, fstr_t data, fid(wssw) writer_fid);
 
 /// Read a web socket message size with <= limit, while simultaneously taking
 /// care to respond to Ping and Close packets. The application should always be
@@ -148,7 +150,7 @@ void wsr_web_socket_close(uint16_t status_code, fstr_t data, rcd_fid_t writer_fi
 /// Throws io exception on too large messages, or if the connection is closed.
 /// If non-null, out_binary will be set to whether the message was in binary
 /// form, rather than text.
-fstr_mem_t* wsr_web_socket_read(size_t limit, rcd_fid_t reader_fid, bool* out_binary);
+fstr_mem_t* wsr_web_socket_read(size_t limit, fid(wssr) reader_fid, bool* out_binary);
 
 /// Returns a simple response without a body.
 static inline wsr_rsp_t wsr_response(wsr_status_t status) {
