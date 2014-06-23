@@ -44,7 +44,9 @@ typedef struct wsr_rsp {
     fstr_t ws_protocol;
     /// If wss_cb is 0, response body stream, otherwise undefined.
     rio_t* body_stream;
-    /// If stream is 0, response body blob, otherwise undefined.
+    /// If body_stream is 0, the rendered html page, otherwise undefined.
+    struct html* html;
+    /// If html is 0, response body blob, otherwise undefined.
     fstr_t body_blob;
     /// Extra argument passed to callback.
     void* cb_arg;
@@ -182,6 +184,16 @@ static inline wsr_rsp_t wsr_response_dynamic(wsr_status_t status, fstr_mem_t* bo
         rsp.headers = new_dict(fstr_t);
         (void) dict_insert(rsp.headers, fstr_t, fstr("content-type"), mime_type);
         rsp.body_blob = fss(import(body));
+    }
+    return rsp;
+}
+
+static inline wsr_rsp_t wsr_response_html(wsr_status_t status, struct html* html) {
+    wsr_rsp_t rsp = wsr_response(status);
+    rsp.heap = lwt_alloc_heap();
+    switch_heap(rsp.heap) {
+        rsp.headers = new_dict(fstr_t);
+        rsp.html = html;
     }
     return rsp;
 }

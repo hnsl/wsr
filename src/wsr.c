@@ -8,6 +8,7 @@
 #include "polarssl/sha1.h"
 #include "wsr.h"
 #include "wsr-mime.h"
+#include "wsr-tpl.h"
 
 /// The minimum number of bytes that we should accept in the header.
 /// We use 6 kB as this is a good compromise between memory usage and what
@@ -268,6 +269,11 @@ static wss_cb_arg_t http_session(rio_t* client_h, wsr_cfg_t cfg) {
             if (rsp.body_stream != 0) {
                 list_push_end(raw_headers, fstr_t, "transfer-encoding: chunked");
                 has_body = true;
+            } else if (rsp.html != 0) {
+                if (dict_read(rsp.headers, fstr_t, "content-type") == 0)
+                    list_push_end(raw_headers, fstr_t, "content-type: text/html; charset=UTF-8");
+                list_push_end(raw_headers, fstr_t, concs("content-length: ", ui2fs(wsr_tpl_length(rsp.html))));
+                has_body = true;
             } else {
                 list_push_end(raw_headers, fstr_t, concs("content-length: ", ui2fs(rsp.body_blob.len)));
                 has_body = (rsp.body_blob.len > 0);
@@ -307,6 +313,9 @@ static wss_cb_arg_t http_session(rio_t* client_h, wsr_cfg_t cfg) {
                 // Write last-chunk without any trailing headers.
                 rio_write(client_h, "0\r\n\r\n");
             }
+        } else if (rsp.html != 0) {
+            // Send rendered html page.
+            wsr_tpl_writev(client_h, rsp.html);
         } else if (rsp.body_blob.len > 0) {
             // Send response body as a pure binary blob.
             rio_write(client_h, rsp.body_blob);
