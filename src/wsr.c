@@ -341,13 +341,13 @@ static void web_socket_read_masked(rio_t* client_r, fstr_t buf, uint8_t mask[4])
         buf.str[i] ^= mask[i & 3];
 }
 
-static void web_socket_fail(fid(wssw) writer_fid, uint16_t status_code, fstr_t data) {
+static void web_socket_fail(fid(wssw) writer_fid, wsr_ws_close_reason_t status_code, fstr_t data) {
     wsr_web_socket_close(status_code, data, writer_fid);
     sub_heap_e(throw(concs("failed web socket: ", data), exception_io));
 }
 
 static void unknown_opcode_fail(fid(wssw) writer_fid, uint8_t opcode) { sub_heap {
-    web_socket_fail(writer_fid, 1002, concs("unknown opcode [", ui2fs(opcode), "]"));
+    web_socket_fail(writer_fid, WS_CLOSE_PROTOCOL_ERROR, concs("unknown opcode [", ui2fs(opcode), "]"));
 }}
 
 join_locked(void) web_socket_pong(fstr_t msg, join_server_params, rio_t* client_w) {
@@ -386,33 +386,33 @@ join_locked(fstr_mem_t*) web_socket_read(size_t limit, bool* out_binary, join_se
         if (mask_bit) {
             rio_read_fill(client_r, FSTR_PACK(mask));
         } else {
-            web_socket_fail(writer_fid, 1002, "missing mask");
+            web_socket_fail(writer_fid, WS_CLOSE_PROTOCOL_ERROR, "missing mask");
         }
         if (reserved != 0)
-            web_socket_fail(writer_fid, 1002, "unsupported extension");
+            web_socket_fail(writer_fid, WS_CLOSE_PROTOCOL_ERROR, "unsupported extension");
         // Handle the frame.
         if (opcode >= 8) {
             // Control frame.
             if (payload_len > 125)
-                web_socket_fail(writer_fid, 1002, "control frame payload too large");
+                web_socket_fail(writer_fid, WS_CLOSE_PROTOCOL_ERROR, "control frame payload too large");
             if (!fin)
-                web_socket_fail(writer_fid, 1002, "fragmented control frame");
+                web_socket_fail(writer_fid, WS_CLOSE_PROTOCOL_ERROR, "fragmented control frame");
             sub_heap {
                 fstr_t buf = fss(fstr_alloc(payload_len));
                 web_socket_read_masked(client_r, buf, mask);
                 if (opcode == 8) {
                     // Close - respond with the same thing and close the connection.
                     if (payload_len == 1)
-                        web_socket_fail(writer_fid, 1002, "invalid close reason");
-                    uint16_t status_code;
+                        web_socket_fail(writer_fid, WS_CLOSE_PROTOCOL_ERROR, "invalid close reason");
+                    wsr_ws_close_reason_t status_code;
                     fstr_t close_reason;
                     if (payload_len == 0) {
-                        status_code = 1005;
+                        status_code = WS_CLOSE_NO_STATUS_RECEIVED;
                         close_reason = "";
                     } else {
                         uint16_t status_code_nbo;
                         fstr_cpy_over(FSTR_PACK(status_code_nbo), buf, 0, 0);
-                        status_code = RIO_NBO_SWAP16(status_code_nbo);
+                        status_code = (wsr_ws_close_reason_t)RIO_NBO_SWAP16(status_code_nbo);
                         close_reason = fstr_slice(buf, 2, buf.len);
                     }
                     wsr_web_socket_close(status_code, close_reason, writer_fid);
@@ -436,7 +436,7 @@ join_locked(fstr_mem_t*) web_socket_read(size_t limit, bool* out_binary, join_se
             if (opcode == 0) {
                 // Continuation.
                 if (frame_type == -1)
-                    web_socket_fail(writer_fid, 1002, "first frame is a continuation frame");
+                    web_socket_fail(writer_fid, WS_CLOSE_PROTOCOL_ERROR, "first frame is a continuation frame");
             } else if (opcode == 1 || opcode == 2) {
                 // Text/Binary.
                 frame_type = opcode;
@@ -444,7 +444,7 @@ join_locked(fstr_mem_t*) web_socket_read(size_t limit, bool* out_binary, join_se
                 unknown_opcode_fail(writer_fid, opcode);
             }
             if (payload_len > limit - outind)
-                web_socket_fail(writer_fid, 1009, "payload too large");
+                web_socket_fail(writer_fid, WS_CLOSE_MESSAGE_TOO_BIG, "payload too large");
             fstr_t buf = fstr_slice(fss(out), outind, outind + payload_len);
             outind += payload_len;
             web_socket_read_masked(client_r, buf, mask);
@@ -501,7 +501,7 @@ void wsr_web_socket_write(fstr_t data, bool binary, fid(wssw) writer_fid) {
     }
 }
 
-join_locked(void) web_socket_close(uint16_t status_code, fstr_t data, join_server_params, rio_t* client_w) {
+join_locked(void) web_socket_close(wsr_ws_close_reason_t status_code, fstr_t data, join_server_params, rio_t* client_w) {
     assert(data.len <= 123);
     uint16_t str_len = (uint16_t)data.len;
     uint16_t two_bytes_nbo = RIO_NBO_SWAP16(0x8800 | (str_len == 0? 0: str_len + 2));
@@ -513,7 +513,7 @@ join_locked(void) web_socket_close(uint16_t status_code, fstr_t data, join_serve
     }
 }
 
-void wsr_web_socket_close(uint16_t status_code, fstr_t data, fid(wssw) writer_fid) {
+void wsr_web_socket_close(wsr_ws_close_reason_t status_code, fstr_t data, fid(wssw) writer_fid) {
     try {
         web_socket_close(status_code, data, writer_fid.fid);
     } catch (exception_inner_join_fail, e) {

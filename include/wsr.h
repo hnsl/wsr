@@ -117,6 +117,26 @@ typedef enum wsr_status {
     HTTP_VERSION_NOT_SUPPORTED = 505,
 } wsr_status_t;
 
+/// Standard web socket close codes. Usually applications should only need
+/// WS_CLOSE_NORMAL (a normal closure, for when the connection is no longer
+/// needed) and WS_CLOSE_POLICY_VIOLATION (a generic "invalid message" code).
+/// Status codes in the range 4000-4999 are reserved for private use and may
+/// also be used for any reason.
+typedef enum wsr_ws_close_reason {
+    WS_CLOSE_NORMAL = 1000,
+    WS_CLOSE_GOING_AWAY = 1001,
+    WS_CLOSE_PROTOCOL_ERROR = 1002,
+    WS_CLOSE_UNSUPPORTED_DATA = 1003,
+    WS_CLOSE_NO_STATUS_RECEIVED = 1005,
+    WS_CLOSE_ABNORMAL = 1006,
+    WS_CLOSE_INVALID_FRAME_PAYLOAD_DATA = 1007,
+    WS_CLOSE_POLICY_VIOLATION = 1008,
+    WS_CLOSE_MESSAGE_TOO_BIG = 1009,
+    WS_CLOSE_MANDATORY_EXTENSION = 1010,
+    WS_CLOSE_INTERNAL_SERVER_ERROR = 1011,
+    WS_CLOSE_TLS_HANDSHAKE = 1015,
+} wsr_ws_close_reason_t;
+
 /// Web socket handshake GUID.
 extern const fstr_t wsr_ws_handshake_guid;
 
@@ -142,9 +162,11 @@ void wsr_start(wsr_cfg_t cfg);
 /// Write a web socket message. Throws io exception.
 void wsr_web_socket_write(fstr_t data, bool binary, fid(wssw) writer_fid);
 
-/// Send a close message over a web socket connection, then close the connection.
+/// Send a close message (a close code + a textual explanation) over a web socket
+/// connection, then close the connection. If "data" is empty, no close code is
+/// sent, which should be interpreted by the client as WS_CLOSE_NO_STATUS_RECEIVED.
 /// Throws io exception.
-void wsr_web_socket_close(uint16_t status_code, fstr_t data, fid(wssw) writer_fid);
+void wsr_web_socket_close(wsr_ws_close_reason_t status_code, fstr_t data, fid(wssw) writer_fid);
 
 /// Read a web socket message size with <= limit, while simultaneously taking
 /// care to respond to Ping and Close packets. The application should always be
