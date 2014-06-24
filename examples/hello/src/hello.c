@@ -191,13 +191,41 @@ static void ws_echo(rio_in_addr4_t peer, sf(wssr)* reader_sf, sf(wssw)* writer_s
     }}
 }
 
+static wsr_rsp_t http_echo(wsr_req_t req) {
+    list(fstr_t)* li = new_list(fstr_t);
+    list_push_end(li, fstr_t, "<!DOCTYPE html><plaintext style='color: #333; white-space: pre-wrap'>");
+    list_push_end(li, fstr_t, concs("Method: ", req.method, "\n"));
+    list_push_end(li, fstr_t, concs("Version: ", req.version, "\n"));
+    list_push_end(li, fstr_t, concs("Path: ", req.path, "\n"));
+    list_push_end(li, fstr_t, "\n** Headers:");
+    dict_foreach(req.headers, fstr_t, key, value) {
+        list_push_end(li, fstr_t, "\n - ");
+        list_push_end(li, fstr_t, key);
+        list_push_end(li, fstr_t, ": ");
+        list_push_end(li, fstr_t, value);
+    }
+    list_push_end(li, fstr_t, "\n** URL parameters:");
+    dict_foreach(req.url_params, fstr_t, key, value) {
+        list_push_end(li, fstr_t, "\n - ");
+        list_push_end(li, fstr_t, key);
+        list_push_end(li, fstr_t, ": ");
+        list_push_end(li, fstr_t, value);
+    }
+    fstr_mem_t* resp = fstr_implode(li, "");
+    return wsr_response_dynamic(HTTP_OK, resp, wsr_mime_html);
+}
+
 static wsr_rsp_t http_request_cb(wsr_req_t req, void* cb_arg) {
     if (fstr_equal(req.path, "/") || fstr_equal(req.path, "/prefetch"))
         req.path = "/index.html";
     if (fstr_equal(req.path, "/lol"))
         return wsr_response_static(HTTP_OK, "<h1>this is a lol page</h1>", wsr_mime_txt);
-    if (fstr_equal(req.path, "/echo"))
-        return wsr_response_web_socket(req, ws_echo, "", cb_arg);
+    if (fstr_equal(req.path, "/echo")) {
+        if (wsr_req_is_ws_open(req))
+            return wsr_response_web_socket(req, ws_echo, "", cb_arg);
+        else
+            return http_echo(req);
+    }
     if (fstr_equal(req.path, "/echo_json"))
         return wsr_response_web_socket(req, ws_echo_json, "", cb_arg);
     if (fstr_equal(req.path, "/chat"))
