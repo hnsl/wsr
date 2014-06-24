@@ -1,6 +1,6 @@
 #include "rcd.h"
-#include "json.h"
 #include "wsr.h"
+#include "wsr-json.h"
 #include "wsr-mime.h"
 
 #pragma librcd
@@ -104,7 +104,7 @@ fiber_main chat_fiber(fiber_main_attr) {
 }
 
 static void ws_fail(fid(wssw) writer_fid, fstr_t msg) {
-    wsr_web_socket_close(1008, msg, writer_fid);
+    wsr_web_socket_close(WS_CLOSE_POLICY_VIOLATION, msg, writer_fid);
     sub_heap_e(throw(concs("failed web socket: ", msg), exception_io));
 }
 
@@ -164,11 +164,20 @@ static void ws_echo_json(rio_in_addr4_t peer, sf(wssr)* reader_sf, sf(wssw)* wri
             fstr_t res;
             try {
                 json_tree_t* tree = json_parse(msg);
+                json_value_t val = JSON_LREF(tree->value, "some", "key");
+                if (!json_is_null(val)) {
+                    // Then tree->value must have been an object.
+                    fstr_t str = json_get_string(val);
+                    json_value_t other = json_new_object();
+                    JSON_SET(other, "key", json_string_value(concs(str, str)));
+                    JSON_SET(tree->value, "other", other);
+                }
                 frobnicate(&tree->value);
                 fstr_t resp = fss(json_stringify(tree->value));
                 wsr_web_socket_write(resp, false, writer_fid);
             } catch (exception_arg, e) {
                 wsr_web_socket_write("failure", false, writer_fid);
+                //*x-dbg*/ DBGE(e);
             }
         }
     }}
@@ -210,7 +219,7 @@ void rcd_main(list(fstr_t)* main_args, list(fstr_t)* main_env) {
         chat_fid = sfid(spawn_fiber(chat_fiber("")));
     }
     wsr_cfg_t cfg = wsr_default_cfg();
-    cfg.bind.port = 8765;
+    cfg.bind.port = 8766;
     cfg.req_cb = http_request_cb;
     req_arg_t arg = {
         .chat_fid = chat_fid,
