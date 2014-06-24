@@ -221,6 +221,16 @@ static inline wsr_rsp_t wsr_response_html(wsr_status_t status, struct html* html
     return rsp;
 }
 
+static inline wsr_rsp_t wsr_response_redirect(fstr_t path) {
+    wsr_rsp_t rsp = wsr_response(HTTP_FOUND);
+    rsp.heap = lwt_alloc_heap();
+    switch_heap(rsp.heap) {
+        rsp.headers = new_dict(fstr_t);
+        (void) dict_insert(rsp.headers, fstr_t, fstr("Location"), path);
+    }
+    return rsp;
+}
+
 /// Returns a virtual response indicating that connection should be upgraded to web socket.
 static inline wsr_rsp_t wsr_response_web_socket(wsr_req_t req, wsr_wss_cb_t wss_cb, fstr_t ws_protocol, void* cb_arg) {
     if (!wsr_req_is_ws_open(req))
