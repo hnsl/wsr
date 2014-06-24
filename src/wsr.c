@@ -328,6 +328,11 @@ typedef struct wss_read_arg {
     fid(wssw) writer_fid;
 } wss_read_arg_t;
 
+typedef struct wss_write_arg {
+    rio_t* client_w;
+    bool closed;
+} wss_write_arg_t;
+
 static void web_socket_read_masked(rio_t* client_r, fstr_t buf, uint8_t mask[4]) {
     rio_read_fill(client_r, buf);
     // Xor buf with mask32, 64 bits at a time. Writes may
@@ -350,8 +355,9 @@ static void unknown_opcode_fail(fid(wssw) writer_fid, uint8_t opcode) { sub_heap
     web_socket_fail(writer_fid, WS_CLOSE_PROTOCOL_ERROR, concs("unknown opcode [", ui2fs(opcode), "]"));
 }}
 
-join_locked(void) web_socket_pong(fstr_t msg, join_server_params, rio_t* client_w) {
+join_locked(void) web_socket_pong(fstr_t msg, join_server_params, wss_write_arg_t* write_arg) {
     assert(msg.len <= 125);
+    rio_t* client_w = write_arg->client_w;
     uint16_t two_bytes_nbo = RIO_NBO_SWAP16(0x8A00 | (uint16_t)msg.len);
     rio_write(client_w, FSTR_PACK(two_bytes_nbo));
     rio_write(client_w, msg);
@@ -466,7 +472,8 @@ fstr_mem_t* wsr_web_socket_read(size_t limit, fid(wssr) reader_fid, bool* out_bi
     }
 }
 
-join_locked(void) web_socket_write(fstr_t data, bool binary, join_server_params, rio_t* client_w) {
+join_locked(void) web_socket_write(fstr_t data, bool binary, join_server_params, wss_write_arg_t* write_arg) {
+    rio_t* client_w = write_arg->client_w;
     uint8_t buf[10];
     fstr_t header;
     header.len = 2;
@@ -501,8 +508,9 @@ void wsr_web_socket_write(fstr_t data, bool binary, fid(wssw) writer_fid) {
     }
 }
 
-join_locked(void) web_socket_close(wsr_ws_close_reason_t status_code, fstr_t data, join_server_params, rio_t* client_w) {
+join_locked(void) web_socket_close(wsr_ws_close_reason_t status_code, fstr_t data, join_server_params, wss_write_arg_t* write_arg) {
     assert(data.len <= 123);
+    rio_t* client_w = write_arg->client_w;
     uint16_t str_len = (uint16_t)data.len;
     uint16_t two_bytes_nbo = RIO_NBO_SWAP16(0x8800 | (str_len == 0? 0: str_len + 2));
     rio_write(client_w, FSTR_PACK(two_bytes_nbo));
@@ -511,6 +519,7 @@ join_locked(void) web_socket_close(wsr_ws_close_reason_t status_code, fstr_t dat
         rio_write(client_w, FSTR_PACK(status_code_nbo));
         rio_write(client_w, data);
     }
+    write_arg->closed = true;
 }
 
 void wsr_web_socket_close(wsr_ws_close_reason_t status_code, fstr_t data, fid(wssw) writer_fid) {
@@ -522,7 +531,13 @@ void wsr_web_socket_close(wsr_ws_close_reason_t status_code, fstr_t data, fid(ws
 }
 
 fiber_main_t(wssw) web_socket_writer(fiber_main_attr, rio_t* client_w) { try {
-    auto_accept_join(web_socket_write, web_socket_pong, web_socket_close, join_server_params, client_w);
+    wss_write_arg_t write_arg = {
+        .client_w = client_w,
+        .closed = false,
+    };
+    while (!write_arg.closed) {
+        accept_join(web_socket_write, web_socket_pong, web_socket_close, join_server_params, &write_arg);
+    }
 } catch (exception_desync, e); }
 
 fiber_main_t(wssr) web_socket_reader(fiber_main_attr, wss_read_arg_t read_arg) { try {
