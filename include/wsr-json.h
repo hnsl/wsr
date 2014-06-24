@@ -1,5 +1,5 @@
-#ifndef JSON_H
-#define JSON_H
+#ifndef WSR_JSON_H
+#define WSR_JSON_H
 
 #include "rcd.h"
 
@@ -138,4 +138,4 @@ inline bool json_is_null(json_value_t value) {
     dict_replace(parent.object_value, json_value_t, prop, value); \
 })
 
-#endif  /* JSON_H */
+#endif  /* WSR_JSON_H */

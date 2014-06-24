@@ -1,6 +1,6 @@
 #include "rcd.h"
 #include "utf8proc.h"
-#include "json.h"
+#include "wsr-json.h"
 
 #pragma librcd
 
