@@ -212,8 +212,8 @@ static wss_cb_arg_t http_session(rio_t* client_h, wsr_cfg_t cfg) {
             http_reply_simple_status(client_h, HTTP_VERSION_NOT_SUPPORTED);
             throw("got unsupported http version from client", exception_io);
         }
-        // We only handle GET requests at this point. Handling other requests would require supporting uploads.
-        if (!fstr_equal(req.method, "GET")) {
+        // We only handle GET and HEAD requests at this point. Handling other requests would require supporting uploads.
+        if (!fstr_equal(req.method, "GET") && !fstr_equal(req.method, "HEAD")) {
             http_reply_simple_status(client_h, HTTP_METHOD_NOT_ALLOWED);
             throw("got unsupported http method from client", exception_io);
         }
@@ -286,7 +286,9 @@ static wss_cb_arg_t http_session(rio_t* client_h, wsr_cfg_t cfg) {
             rio_write_part(client_h, raw_header, has_body);
         }
         // Send raw body.
-        if (rsp.body_stream != 0) {
+        if (fstr_equal(req.method, "HEAD")) {
+            // Don't send a body.
+        } else if (rsp.body_stream != 0) {
             // Send response body with chunked transfer encoding.
             fstr_t body_buf = fss(fstr_alloc_buffer(WSR_BODY_STREAM_BUF_SIZE));
             for (;;) sub_heap {
