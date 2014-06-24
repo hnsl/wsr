@@ -418,7 +418,7 @@ join_locked(fstr_mem_t*) web_socket_read(size_t limit, bool* out_binary, join_se
                     } else {
                         uint16_t status_code_nbo;
                         fstr_cpy_over(FSTR_PACK(status_code_nbo), buf, 0, 0);
-                        status_code = (wsr_ws_close_reason_t)RIO_NBO_SWAP16(status_code_nbo);
+                        status_code = RIO_NBO_SWAP16(status_code_nbo);
                         close_reason = fstr_slice(buf, 2, buf.len);
                     }
                     wsr_web_socket_close(status_code, close_reason, writer_fid);
