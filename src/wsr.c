@@ -352,8 +352,8 @@ static void unknown_opcode_fail(fid(wssw) writer_fid, uint8_t opcode) { sub_heap
 
 join_locked(void) web_socket_pong(fstr_t msg, join_server_params, rio_t* client_w) {
     assert(msg.len <= 125);
-    uint16_t two_bytes = RIO_NBO_SWAP16(0x8A00 | (uint16_t)msg.len);
-    rio_write(client_w, FSTR_PACK(two_bytes));
+    uint16_t two_bytes_nbo = RIO_NBO_SWAP16(0x8A00 | (uint16_t)msg.len);
+    rio_write(client_w, FSTR_PACK(two_bytes_nbo));
     rio_write(client_w, msg);
 }
 
@@ -410,8 +410,9 @@ join_locked(fstr_mem_t*) web_socket_read(size_t limit, bool* out_binary, join_se
                         status_code = 1005;
                         close_reason = "";
                     } else {
-                        fstr_cpy_over(FSTR_PACK(status_code), buf, 0, 0);
-                        status_code = RIO_NBO_SWAP16(status_code);
+                        uint16_t status_code_nbo;
+                        fstr_cpy_over(FSTR_PACK(status_code_nbo), buf, 0, 0);
+                        status_code = RIO_NBO_SWAP16(status_code_nbo);
                         close_reason = fstr_slice(buf, 2, buf.len);
                     }
                     wsr_web_socket_close(status_code, close_reason, writer_fid);
@@ -422,7 +423,7 @@ join_locked(fstr_mem_t*) web_socket_read(size_t limit, bool* out_binary, join_se
                         throw(reason, exception_io);
                     }
                 } else if (opcode == 9) {
-                   // Ping.
+                    // Ping.
                     web_socket_pong(buf, writer_fid.fid);
                 } else if (opcode == 10) {
                     // Pong - just ignore.
@@ -476,21 +477,18 @@ join_locked(void) web_socket_write(fstr_t data, bool binary, join_server_params,
     } else if (data.len < 0x10000) {
         payload1 = 126;
         header.len += 2;
-        uint16_t len = (uint16_t)data.len;
-        len = RIO_NBO_SWAP16(len);
-        fstr_cpy_over(fstr_slice(header, 2, 4), FSTR_PACK(len), 0, 0);
+        uint16_t len_nbo = RIO_NBO_SWAP16((uint16_t)data.len);
+        fstr_cpy_over(fstr_slice(header, 2, 4), FSTR_PACK(len_nbo), 0, 0);
     } else {
         payload1 = 127;
         header.len += 8;
-        uint64_t len = (uint64_t)data.len;
-        len = RIO_NBO_SWAP64(len);
-        fstr_cpy_over(fstr_slice(header, 2, 10), FSTR_PACK(len), 0, 0);
+        uint64_t len_nbo = RIO_NBO_SWAP64((uint64_t)data.len);
+        fstr_cpy_over(fstr_slice(header, 2, 10), FSTR_PACK(len_nbo), 0, 0);
     }
     uint16_t opcode = binary? 2: 1;
     uint16_t fin = 0x8000;
-    uint16_t two_bytes = fin | (opcode << 8) | payload1;
-    two_bytes = RIO_NBO_SWAP16(two_bytes);
-    fstr_cpy_over(fstr_slice(header, 0, 2), FSTR_PACK(two_bytes), 0, 0);
+    uint16_t two_bytes_nbo = RIO_NBO_SWAP16(fin | (opcode << 8) | payload1);
+    fstr_cpy_over(fstr_slice(header, 0, 2), FSTR_PACK(two_bytes_nbo), 0, 0);
     rio_write(client_w, header);
     rio_write(client_w, data);
 }
@@ -506,12 +504,11 @@ void wsr_web_socket_write(fstr_t data, bool binary, fid(wssw) writer_fid) {
 join_locked(void) web_socket_close(uint16_t status_code, fstr_t data, join_server_params, rio_t* client_w) {
     assert(data.len <= 123);
     uint16_t str_len = (uint16_t)data.len;
-    uint16_t two_bytes = 0x8800 | (str_len == 0? 0: str_len + 2);
-    two_bytes = RIO_NBO_SWAP16(two_bytes);
-    rio_write(client_w, FSTR_PACK(two_bytes));
+    uint16_t two_bytes_nbo = RIO_NBO_SWAP16(0x8800 | (str_len == 0? 0: str_len + 2));
+    rio_write(client_w, FSTR_PACK(two_bytes_nbo));
     if (str_len != 0) {
-        status_code = RIO_NBO_SWAP16(status_code);
-        rio_write(client_w, FSTR_PACK(status_code));
+        uint16_t status_code_nbo = RIO_NBO_SWAP16(status_code);
+        rio_write(client_w, FSTR_PACK(status_code_nbo));
         rio_write(client_w, data);
     }
 }

@@ -1,6 +1,7 @@
 #ifndef WSR_H
 #define	WSR_H
 
+#include "rcd.h"
 #define WSR_VERSION "0.1"
 
 /// A http header.
