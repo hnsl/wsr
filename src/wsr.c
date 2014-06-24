@@ -171,6 +171,39 @@ static inline bool parse_req_line(fstr_t req_line, fstr_t* out_method, fstr_t* o
     }
 }
 
+static inline bool is_hex(uint8_t ch) {
+    return
+        ('0' <= ch && ch <= '9') ||
+        ('A' <= ch && ch <= 'F') ||
+        ('a' <= ch && ch <= 'f');
+}
+
+static inline uint32_t hex_to_int(uint8_t ch) {
+    if ('0' <= ch && ch <= '9') return ch - '0';
+    if ('A' <= ch && ch <= 'F') return ch - 'A' + 10;
+    if ('a' <= ch && ch <= 'f') return ch - 'a' + 10;
+}
+
+static inline fstr_mem_t* decode_x_www_form_urlencoded(fstr_t enc) {
+    fstr_mem_t* out = fstr_alloc(enc.len);
+    size_t out_i = 0;
+    for (size_t i = 0; i < enc.len; i++) {
+        uint8_t ch;
+        if (enc.str[i] == '%' && i + 2 < enc.len && is_hex(enc.str[i + 1]) && is_hex(enc.str[i + 2])) {
+            ch = hex_to_int(enc.str[i + 1]) * 16 + hex_to_int(enc.str[i + 2]);
+            i += 2;
+        } else if (enc.str[i] == '+') {
+            ch = ' ';
+        } else {
+            ch = enc.str[i];
+        }
+        out->str[out_i] = ch;
+        out_i++;
+    }
+    out->len = out_i;
+    return out;
+}
+
 static void request_header_error(rio_t* client_h) {
     // Return bad request and close connection.
     http_reply_simple_status(client_h, HTTP_BAD_REQUEST);
@@ -205,7 +238,8 @@ static wss_cb_arg_t http_session(rio_t* client_h, wsr_cfg_t cfg) {
         if (!fstr_iterate_trim(&raw_headers, "\r\n", &req_line))
             request_header_error(client_h);
         wsr_req_t req;
-        if (!parse_req_line(req_line, &req.method, &req.path, &req.version))
+        fstr_t path;
+        if (!parse_req_line(req_line, &req.method, &path, &req.version))
             request_header_error(client_h);
         // We only allow HTTP 1.0 and 1.1 at this point
         if (!fstr_equal(req.version, "1.1") && !fstr_equal(req.version, "1.0")) {
@@ -216,6 +250,23 @@ static wss_cb_arg_t http_session(rio_t* client_h, wsr_cfg_t cfg) {
         if (!fstr_equal(req.method, "GET") && !fstr_equal(req.method, "HEAD")) {
             http_reply_simple_status(client_h, HTTP_METHOD_NOT_ALLOWED);
             throw("got unsupported http method from client", exception_io);
+        }
+        // Extract URL parameters.
+        req.url_params = new_dict(fstr_t);
+        fstr_t url_params;
+        if (fstr_divide(path, "?", &req.path, &url_params)) {
+            for (fstr_t param; fstr_iterate_trim(&url_params, "&", &param);) {
+                fstr_t enc_key, enc_value;
+                if (!fstr_divide(param, "=", &enc_key, &enc_value)) {
+                    enc_key = param;
+                    enc_value = "";
+                }
+                fstr_t key = fss(decode_x_www_form_urlencoded(enc_key));
+                fstr_t value = fss(decode_x_www_form_urlencoded(enc_value));
+                dict_replace(req.url_params, fstr_t, key, value);
+            }
+        } else {
+            req.path = path;
         }
         // Index headers from client.
         req.headers = new_dict(fstr_t);

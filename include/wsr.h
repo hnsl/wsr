@@ -19,6 +19,7 @@ typedef struct wsr_req {
     fstr_t version;
     /// Requests headers. All keys are trimmed and lowercased. All values are trimmed.
     dict(fstr_t)* headers;
+    dict(fstr_t)* url_params;
 } wsr_req_t;
 
 decl_fid_t(wssr);
