@@ -226,7 +226,7 @@ static inline wsr_rsp_t wsr_response_redirect(fstr_t path) {
     rsp.heap = lwt_alloc_heap();
     switch_heap(rsp.heap) {
         rsp.headers = new_dict(fstr_t);
-        (void) dict_insert(rsp.headers, fstr_t, fstr("Location"), path);
+        (void) dict_insert(rsp.headers, fstr_t, fstr("location"), path);
     }
     return rsp;
 }
