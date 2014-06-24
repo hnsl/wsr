@@ -363,3 +363,7 @@ fstr_mem_t* json_stringify(json_value_t value) { sub_heap {
     stringify_value(value, parts);
     return escape(fstr_implode(parts, ""));
 }}
+
+void json_fail_missing_property(fstr_t prop_name) {
+    sub_heap_e(throw(concs("missing JSON property: ", prop_name), exception_arg));
+}
