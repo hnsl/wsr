@@ -16,10 +16,13 @@ typedef struct html html_t;
 typedef struct wsr_tpl_ctx wsr_tpl_ctx_t;
 
 dict(html_t);
+list(html_t);
 
 html_t* wsr_html_raw(fstr_t raw_html);
 
 html_t* wsr_html_conc(size_t n_html, html_t* htmls);
+
+html_t* wsr_html_implode(list(html_t*)* htmls);
 
 html_t* wsr_html_escape(fstr_t str);
 

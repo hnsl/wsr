@@ -75,6 +75,15 @@ html_t* wsr_html_conc(size_t n_html, html_t* htmls) {
     return buf;
 }
 
+html_t* wsr_html_implode(list(html_t*)* htmls) {
+    html_t* buf = wsr_tpl_start();
+    list_foreach(htmls, html_t*, html) {
+        for (size_t j = 0; j < html->n_total; j++)
+            html_append_iov(html->iov[j], buf);
+    }
+    return buf;
+}
+
 html_t* wsr_html_escape(fstr_t str) {
     html_t* buf = wsr_tpl_start();
     size_t raw_i = 0;
