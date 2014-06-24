@@ -216,6 +216,8 @@ static inline wsr_rsp_t wsr_response_html(wsr_status_t status, struct html* html
     rsp.heap = lwt_alloc_heap();
     switch_heap(rsp.heap) {
         rsp.headers = new_dict(fstr_t);
+        extern const fstr_t wsr_mime_html;
+        (void) dict_insert(rsp.headers, fstr_t, fstr("content-type"), wsr_mime_html);
         rsp.html = html;
     }
     return rsp;

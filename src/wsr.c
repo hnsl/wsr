@@ -270,8 +270,6 @@ static wss_cb_arg_t http_session(rio_t* client_h, wsr_cfg_t cfg) {
                 list_push_end(raw_headers, fstr_t, "transfer-encoding: chunked");
                 has_body = true;
             } else if (rsp.html != 0) {
-                if (dict_read(rsp.headers, fstr_t, "content-type") == 0)
-                    list_push_end(raw_headers, fstr_t, "content-type: text/html; charset=UTF-8");
                 list_push_end(raw_headers, fstr_t, concs("content-length: ", ui2fs(wsr_tpl_length(rsp.html))));
                 has_body = true;
             } else {
@@ -646,10 +644,6 @@ wsr_rsp_t wsr_response_file(wsr_req_t req, fstr_t base_path) { sub_heap {
             // final expected content size so client is aware of the download progress.
             (void) dict_insert(rsp.headers, fstr_t, "content-length", ui2fs(st.size));
             fstr_t content_type = mime_type;
-            if (fstr_equal(mime_type, wsr_mime_html) || fstr_equal(mime_type, wsr_mime_txt)) {
-                // UTF-8 is the default encoding for text and html files.
-                content_type = concs(mime_type, "; charset=utf-8");
-            }
             (void) dict_insert(rsp.headers, fstr_t, "content-type", content_type);
             (void) dict_insert(rsp.headers, fstr_t, "etag", fss(import(etag)));
             rsp.body_stream = import(file_h);
