@@ -34,9 +34,13 @@ struct html {
 struct wsr_tpl_ctx {
     fstr_t root_tpl_path;
     bool strict;
+    bool precompile;
+    dict(wsr_tpl_t*)* precompiled_partials;
 };
 
 static size_t trq_iovcap_hint = 0x1;
+
+static wsr_tpl_t* compile_tpl(wsr_tpl_ctx_t* ctx, fstr_t tpl_path);
 
 static void html_append_iov(struct iovec iov, html_t* buf) {
     if (iov.iov_len == 0)
@@ -118,7 +122,15 @@ html_t* wsr_html_escape(fstr_t str) {
     return buf;
 }
 
-static wsr_tpl_t* compile_tpl(wsr_tpl_ctx_t* ctx, fstr_t tpl_path) { sub_heap_txn(heap) {
+static wsr_tpl_t* get_precompiled_tpl(wsr_tpl_ctx_t* ctx, fstr_t tpl_path) {
+    wsr_tpl_t** prepared_tpl_ptr = dict_read(ctx->precompiled_partials, wsr_tpl_t*, tpl_path);
+    if (prepared_tpl_ptr == 0)
+        throw("template not compiled", exception_arg);
+    return *prepared_tpl_ptr;
+}
+
+static wsr_tpl_t* inner_compile_tpl(wsr_tpl_ctx_t* ctx, fstr_t tpl_path) { sub_heap_txn(heap) {
+    DBGFN("compiling: [", tpl_path ,"]");
     fstr_t raw_tpl_path = concs(ctx->root_tpl_path, "/", tpl_path);
     if (!rio_file_exists(raw_tpl_path))
         throw(concs("could not find template [", tpl_path, "]"), exception_arg);
@@ -170,6 +182,21 @@ static wsr_tpl_t* compile_tpl(wsr_tpl_ctx_t* ctx, fstr_t tpl_path) { sub_heap_tx
     }
 }}
 
+static wsr_tpl_t* compile_tpl(wsr_tpl_ctx_t* ctx, fstr_t tpl_path) {
+    wsr_tpl_t* tpl = 0;
+    if (ctx->precompile) {
+        try {
+            tpl = get_precompiled_tpl(ctx, tpl_path);
+        } catch(exception_arg, e){
+            tpl = inner_compile_tpl(ctx, tpl_path);
+            (void)dict_insert(ctx->precompiled_partials, wsr_tpl_t*, tpl_path, tpl);
+        }
+    } else {
+        tpl = inner_compile_tpl(ctx, tpl_path);
+    }
+    return tpl;
+}
+
 static void tpl_execute(wsr_tpl_ctx_t* ctx, wsr_tpl_t* tpl, dict(html_t*)* partials, html_t* buf) {
     for (size_t i = 0; i < tpl->n_elems; i++) {
         wsr_elem_t elem = tpl->elems[i];
@@ -197,7 +224,14 @@ static void tpl_execute(wsr_tpl_ctx_t* ctx, wsr_tpl_t* tpl, dict(html_t*)* parti
 }
 
 void wsr_tpl_render(wsr_tpl_ctx_t* ctx, fstr_t tpl_path, dict(html_t*)* partials, html_t* buf) {
-    tpl_execute(ctx, compile_tpl(ctx, tpl_path), partials, buf);
+    wsr_tpl_t* template = ctx->precompile? get_precompiled_tpl(ctx, tpl_path): compile_tpl(ctx, tpl_path);
+    tpl_execute(ctx, template, partials, buf);
+}
+
+void wsr_tpl_precompile(wsr_tpl_ctx_t* ctx, list(fstr_t)* root_tpl_paths) {
+    list_foreach(root_tpl_paths, fstr_t, root_tpl_path) {
+        compile_tpl(ctx, root_tpl_path);
+    }
 }
 
 html_t* wsr_tpl_start() {
@@ -246,11 +280,12 @@ void wsr_tpl_writev(rio_t* write_h, html_t* html) {
     }
 }
 
-wsr_tpl_ctx_t* wsr_tpl_init(fstr_t root_tpl_path, bool compile, bool strict) {
-    if (compile)
-        throw("comple not impl", exception_fatal);
+wsr_tpl_ctx_t* wsr_tpl_init(fstr_t root_tpl_path, bool precompile, bool strict) {
     wsr_tpl_ctx_t* ctx = new(wsr_tpl_ctx_t);
     ctx->root_tpl_path = fsc(root_tpl_path);
     ctx->strict = strict;
+    ctx->precompile = precompile;
+    if (precompile)
+        ctx->precompiled_partials = new_dict(wsr_tpl_t*);
     return ctx;
 }

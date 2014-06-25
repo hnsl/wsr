@@ -16,6 +16,7 @@ typedef struct html html_t;
 typedef struct wsr_tpl_ctx wsr_tpl_ctx_t;
 
 dict(html_t);
+
 list(html_t);
 
 html_t* wsr_html_raw(fstr_t raw_html);
@@ -28,6 +29,8 @@ html_t* wsr_html_escape(fstr_t str);
 
 void wsr_tpl_render(wsr_tpl_ctx_t* ctx, fstr_t tpl_path, dict(html_t*)* partials, html_t* buf);
 
+void wsr_tpl_precompile(wsr_tpl_ctx_t* ctx, list(fstr_t)* root_tpl_paths);
+
 html_t* wsr_tpl_start();
 
 size_t wsr_tpl_length(html_t* html);
@@ -37,6 +40,6 @@ size_t wsr_tpl_length(html_t* html);
 /// afterwards.
 void wsr_tpl_writev(rio_t* write_h, html_t* html);
 
-wsr_tpl_ctx_t* wsr_tpl_init(fstr_t root_tpl_path, bool compile, bool strict);
+wsr_tpl_ctx_t* wsr_tpl_init(fstr_t root_tpl_path, bool precompile, bool strict);
 
 #endif	/* WSR_TPL_H */
