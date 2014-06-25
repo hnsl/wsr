@@ -125,7 +125,7 @@ html_t* wsr_html_escape(fstr_t str) {
 static wsr_tpl_t* get_precompiled_tpl(wsr_tpl_ctx_t* ctx, fstr_t tpl_path) {
     wsr_tpl_t** prepared_tpl_ptr = dict_read(ctx->precompiled_partials, wsr_tpl_t*, tpl_path);
     if (prepared_tpl_ptr == 0)
-        throw("template not compiled", exception_arg);
+        throw(concs("template [", tpl_path, "]not compiled"), exception_arg);
     return *prepared_tpl_ptr;
 }
 
@@ -228,12 +228,6 @@ void wsr_tpl_render(wsr_tpl_ctx_t* ctx, fstr_t tpl_path, dict(html_t*)* partials
     tpl_execute(ctx, template, partials, buf);
 }
 
-void wsr_tpl_precompile(wsr_tpl_ctx_t* ctx, list(fstr_t)* root_tpl_paths) {
-    list_foreach(root_tpl_paths, fstr_t, root_tpl_path) {
-        compile_tpl(ctx, root_tpl_path);
-    }
-}
-
 html_t* wsr_tpl_start() {
     size_t alloc_size;
     html_t* trb = lwt_alloc_buffer(sizeof(html_t) + trq_iovcap_hint * sizeof(struct iovec), &alloc_size);
@@ -280,12 +274,37 @@ void wsr_tpl_writev(rio_t* write_h, html_t* html) {
     }
 }
 
+static void compile_templates_at(wsr_tpl_ctx_t* ctx, fstr_t tpl_rel_path) { sub_heap_txn(heap){
+    fstr_t abs_path = concs(ctx->root_tpl_path, tpl_rel_path);
+    rio_stat_t p_stat = rio_file_lstat(abs_path);
+    switch(p_stat.file_type) {{
+    } case rio_file_type_directory: {
+        list(fstr_mem_t*)* sub_paths = rio_file_list(abs_path);
+        list_foreach(sub_paths, fstr_mem_t*, sub_path_mem) {
+            switch_heap(heap) {
+                fstr_t next_rel_path = concs(tpl_rel_path, "/", fss(sub_path_mem));
+                compile_templates_at(ctx, next_rel_path);
+            }
+        }
+        break;
+    } case rio_file_type_regular: {
+        switch_heap(heap) {
+            compile_tpl(ctx, tpl_rel_path);
+        }
+        break;
+    } default: {
+        break;
+    }}
+}}
+
 wsr_tpl_ctx_t* wsr_tpl_init(fstr_t root_tpl_path, bool precompile, bool strict) {
     wsr_tpl_ctx_t* ctx = new(wsr_tpl_ctx_t);
     ctx->root_tpl_path = fsc(root_tpl_path);
     ctx->strict = strict;
     ctx->precompile = precompile;
-    if (precompile)
+    if (precompile) {
         ctx->precompiled_partials = new_dict(wsr_tpl_t*);
+        compile_templates_at(ctx, "");
+    }
     return ctx;
 }

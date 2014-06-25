@@ -29,8 +29,6 @@ html_t* wsr_html_escape(fstr_t str);
 
 void wsr_tpl_render(wsr_tpl_ctx_t* ctx, fstr_t tpl_path, dict(html_t*)* partials, html_t* buf);
 
-void wsr_tpl_precompile(wsr_tpl_ctx_t* ctx, list(fstr_t)* root_tpl_paths);
-
 html_t* wsr_tpl_start();
 
 size_t wsr_tpl_length(html_t* html);
