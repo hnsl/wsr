@@ -221,7 +221,7 @@ void wsr_tpl_writev(rio_t* write_h, html_t* html) {
     struct iovec* iov = html->iov;
     int32_t fd = rio_get_fd_write(write_h);
     while (n_left > 0) {
-        ssize_t writev_r = writev(fd, iov, n_left);
+        ssize_t writev_r = writev(fd, iov, MIN(n_left, IOV_MAX));
         if (writev_r == -1) {
             int32_t err = errno;
             if (err == EWOULDBLOCK) {
