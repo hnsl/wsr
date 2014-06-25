@@ -238,11 +238,11 @@ static wss_cb_arg_t http_session(rio_t* client_h, wsr_cfg_t cfg) {
         if (!fstr_iterate_trim(&raw_headers, "\r\n", &req_line))
             request_header_error(client_h);
         wsr_req_t req;
-        fstr_t path;
-        if (!parse_req_line(req_line, &req.method, &path, &req.version))
+        fstr_t path, version;
+        if (!parse_req_line(req_line, &req.method, &path, &version))
             request_header_error(client_h);
-        // We only allow HTTP 1.0 and 1.1 at this point
-        if (!fstr_equal(req.version, "1.1") && !fstr_equal(req.version, "1.0")) {
+        // We only allow HTTP 1.0 and 1.1 at this point.
+        if (!fstr_equal(version, "1.1") && !fstr_equal(version, "1.0")) {
             http_reply_simple_status(client_h, HTTP_VERSION_NOT_SUPPORTED);
             throw("got unsupported http version from client", exception_io);
         }

@@ -16,7 +16,6 @@ typedef struct wsr_hdr {
 typedef struct wsr_req {
     fstr_t method;
     fstr_t path;
-    fstr_t version;
     /// Requests headers. All keys are trimmed and lowercased. All values are trimmed.
     dict(fstr_t)* headers;
     dict(fstr_t)* url_params;
