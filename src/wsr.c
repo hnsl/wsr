@@ -176,6 +176,17 @@ static inline bool parse_req_line(fstr_t req_line, fstr_t* out_method, fstr_t* o
     }
 }
 
+/// Remove an optional "; charset=<charset>" from a content-type header, returning
+/// false if the charset is anything but UTF-8 (the only thing we support).
+static bool content_type_consume_charset_utf8(fstr_t* raw_content_type) {
+    fstr_t str = *raw_content_type, c_content_type;
+#pragma ocre2c(str): \i ^ ([^ ;]*){c_content_type} (; \s* charset=utf-8)? $ {@match}
+    return false;
+match:
+    *raw_content_type = c_content_type;
+    return true;
+}
+
 static inline bool is_hex(uint8_t ch) {
     return
         ('0' <= ch && ch <= '9') ||
@@ -300,6 +311,10 @@ static wss_cb_arg_t http_session(rio_t* client_h, wsr_cfg_t cfg) {
             req.post_params = new_dict(fstr_t);
             fstr_t* maybe_content_type = dict_read(req.headers, fstr_t, "content-type");
             fstr_t content_type = (maybe_content_type != 0? *maybe_content_type: "");
+            if (!content_type_consume_charset_utf8(&content_type)) {
+                http_reply_simple_status(client_h, HTTP_BAD_REQUEST);
+                throw("unsupported content-type charset for POST request", exception_io);
+            }
             if (content_length_str == 0) {
                 http_reply_simple_status(client_h, HTTP_LENGTH_REQUIRED);
                 throw("missing content-length of POST request", exception_io);
