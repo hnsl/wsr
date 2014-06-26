@@ -191,11 +191,18 @@ static void ws_echo(rio_in_addr4_t peer, sf(wssr)* reader_sf, sf(wssw)* writer_s
     }}
 }
 
+fstr_t serial_method(wsr_method_t method) {
+    switch (method) {
+    case METHOD_GET: return "GET";
+    case METHOD_HEAD: return "HEAD";
+    case METHOD_POST: return "POST";
+    }
+}
+
 static wsr_rsp_t http_echo(wsr_req_t req) {
     list(fstr_t)* li = new_list(fstr_t);
     list_push_end(li, fstr_t, "<!DOCTYPE html><plaintext style='color: #333; white-space: pre-wrap'>");
-    list_push_end(li, fstr_t, concs("Method: ", req.method, "\n"));
-    list_push_end(li, fstr_t, concs("Version: ", req.version, "\n"));
+    list_push_end(li, fstr_t, concs("Method: ", serial_method(req.method), "\n"));
     list_push_end(li, fstr_t, concs("Path: ", req.path, "\n"));
     list_push_end(li, fstr_t, "\n** Headers:");
     dict_foreach(req.headers, fstr_t, key, value) {
@@ -210,6 +217,15 @@ static wsr_rsp_t http_echo(wsr_req_t req) {
         list_push_end(li, fstr_t, key);
         list_push_end(li, fstr_t, ": ");
         list_push_end(li, fstr_t, value);
+    }
+    if (req.method == METHOD_POST) {
+        list_push_end(li, fstr_t, "\n** POST parameters:");
+        dict_foreach(req.post_params, fstr_t, key, value) {
+            list_push_end(li, fstr_t, "\n - ");
+            list_push_end(li, fstr_t, key);
+            list_push_end(li, fstr_t, ": ");
+            list_push_end(li, fstr_t, value);
+        }
     }
     fstr_mem_t* resp = fstr_implode(li, "");
     return wsr_response_dynamic(HTTP_OK, resp, wsr_mime_html);
