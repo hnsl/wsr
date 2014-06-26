@@ -24,8 +24,8 @@
 /// times this value.
 #define WSR_READ_PEEK_BUF_SIZE (0x800)
 
-/// Maximum number of headers we support in a single http request.
-#define WSR_MAX_N_HEADERS (0x100)
+/// The default limit of POST request sizes, returned by default_pre_post_cb.
+#define WSR_DEFAULT_ACCEPTED_POST_SIZE (0x100000)
 
 #pragma librcd
 
@@ -124,10 +124,15 @@ fstr_t wsr_reason(wsr_status_t status) {
     }
 }
 
+static size_t default_pre_post_cb(wsr_req_t req, void* cb_arg) {
+    return WSR_DEFAULT_ACCEPTED_POST_SIZE;
+}
+
 wsr_cfg_t wsr_default_cfg() {
     wsr_cfg_t cfg = {
         .bind.port = 80,
         .tcp_backlog = 1024,
+        .pre_post_cb = default_pre_post_cb,
     };
     return cfg;
 }
@@ -204,6 +209,19 @@ static inline fstr_mem_t* decode_x_www_form_urlencoded(fstr_t enc) {
     return out;
 }
 
+static void decode_many_x_www_form_urlencoded(fstr_t data, dict(fstr_t)* url_params) {
+    for (fstr_t param; fstr_iterate_trim(&data, "&", &param);) {
+        fstr_t enc_key, enc_value;
+        if (!fstr_divide(param, "=", &enc_key, &enc_value)) {
+            enc_key = param;
+            enc_value = "";
+        }
+        fstr_t key = fss(decode_x_www_form_urlencoded(enc_key));
+        fstr_t value = fss(decode_x_www_form_urlencoded(enc_value));
+        dict_replace(url_params, fstr_t, key, value);
+    }
+}
+
 static void request_header_error(rio_t* client_h) {
     // Return bad request and close connection.
     http_reply_simple_status(client_h, HTTP_BAD_REQUEST);
@@ -238,16 +256,21 @@ static wss_cb_arg_t http_session(rio_t* client_h, wsr_cfg_t cfg) {
         if (!fstr_iterate_trim(&raw_headers, "\r\n", &req_line))
             request_header_error(client_h);
         wsr_req_t req;
-        fstr_t path, version;
-        if (!parse_req_line(req_line, &req.method, &path, &version))
+        fstr_t method, path, version;
+        if (!parse_req_line(req_line, &method, &path, &version))
             request_header_error(client_h);
         // We only allow HTTP 1.0 and 1.1 at this point.
         if (!fstr_equal(version, "1.1") && !fstr_equal(version, "1.0")) {
             http_reply_simple_status(client_h, HTTP_VERSION_NOT_SUPPORTED);
             throw("got unsupported http version from client", exception_io);
         }
-        // We only handle GET and HEAD requests at this point. Handling other requests would require supporting uploads.
-        if (!fstr_equal(req.method, "GET") && !fstr_equal(req.method, "HEAD")) {
+        if (fstr_equal(method, "GET")) {
+            req.method = METHOD_GET;
+        } else if (fstr_equal(method, "HEAD")) {
+            req.method = METHOD_HEAD;
+        } else if (fstr_equal(method, "POST")) {
+            req.method = METHOD_POST;
+        } else {
             http_reply_simple_status(client_h, HTTP_METHOD_NOT_ALLOWED);
             throw("got unsupported http method from client", exception_io);
         }
@@ -255,16 +278,7 @@ static wss_cb_arg_t http_session(rio_t* client_h, wsr_cfg_t cfg) {
         req.url_params = new_dict(fstr_t);
         fstr_t url_params;
         if (fstr_divide(path, "?", &req.path, &url_params)) {
-            for (fstr_t param; fstr_iterate_trim(&url_params, "&", &param);) {
-                fstr_t enc_key, enc_value;
-                if (!fstr_divide(param, "=", &enc_key, &enc_value)) {
-                    enc_key = param;
-                    enc_value = "";
-                }
-                fstr_t key = fss(decode_x_www_form_urlencoded(enc_key));
-                fstr_t value = fss(decode_x_www_form_urlencoded(enc_value));
-                dict_replace(req.url_params, fstr_t, key, value);
-            }
+            decode_many_x_www_form_urlencoded(url_params, req.url_params);
         } else {
             req.path = path;
         }
@@ -278,6 +292,44 @@ static wss_cb_arg_t http_session(rio_t* client_h, wsr_cfg_t cfg) {
             fstr_tolower(key);
             value = fstr_trim(value);
             (void) dict_insert(req.headers, fstr_t, key, value);
+        }
+        // Extract POST parameters if relevant.
+        fstr_t* content_length_str = dict_read(req.headers, fstr_t, "content-length");
+        uint128_t content_length = (content_length_str != 0? fs2ui(*content_length_str): 0);
+        if (req.method == METHOD_POST) {
+            req.post_params = new_dict(fstr_t);
+            fstr_t* maybe_content_type = dict_read(req.headers, fstr_t, "content-type");
+            fstr_t content_type = (maybe_content_type != 0? *maybe_content_type: "");
+            if (content_length_str == 0) {
+                http_reply_simple_status(client_h, HTTP_LENGTH_REQUIRED);
+                throw("missing content-length of POST request", exception_io);
+            }
+            if (dict_read(req.headers, fstr_t, "transfer-encoding")) {
+                http_reply_simple_status(client_h, HTTP_BAD_REQUEST);
+                throw("transfer-encoding not supported", exception_io);
+            }
+            size_t max_content_length = cfg.pre_post_cb(req, cfg.cb_arg);
+            if (max_content_length == 0) {
+                http_reply_simple_status(client_h, HTTP_METHOD_NOT_ALLOWED);
+                throw("POST requests not supported", exception_io);
+            }
+            if (content_length > max_content_length) {
+                http_reply_simple_status(client_h, HTTP_REQ_ENT_TOO_LARGE);
+                throw("too large POST request", exception_io);
+            }
+            fstr_t request_data = fss(fstr_alloc(content_length));
+            rio_read_fill(client_h, request_data);
+            if (fstr_equal(content_type, "application/x-www-form-urlencoded")) {
+                decode_many_x_www_form_urlencoded(request_data, req.post_params);
+            } else {
+                http_reply_simple_status(client_h, HTTP_BAD_REQUEST);
+                throw("POST request content-type not supported", exception_io);
+            }
+        } else {
+            if (content_length != 0 || dict_read(req.headers, fstr_t, "transfer-encoding") != 0) {
+                http_reply_simple_status(client_h, HTTP_BAD_REQUEST);
+                throw("content-length and transfer-encoding only supported for POST requests", exception_io);
+            }
         }
         // Pass request to callback and get response.
         wsr_rsp_t rsp = cfg.req_cb(req, cfg.cb_arg);
@@ -335,7 +387,7 @@ static wss_cb_arg_t http_session(rio_t* client_h, wsr_cfg_t cfg) {
             rio_write_part(client_h, raw_header, has_body);
         }
         // Send raw body.
-        if (fstr_equal(req.method, "HEAD")) {
+        if (req.method == METHOD_HEAD) {
             // Don't send a body.
         } else if (rsp.body_stream != 0) {
             // Send response body with chunked transfer encoding.

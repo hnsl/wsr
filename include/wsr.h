@@ -12,13 +12,20 @@ typedef struct wsr_hdr {
     fstr_t value;
 } wsr_hdr_t;
 
+typedef enum wsr_method {
+    METHOD_GET,
+    METHOD_HEAD,
+    METHOD_POST,
+} wsr_method_t;
+
 /// An incoming http request.
 typedef struct wsr_req {
-    fstr_t method;
+    wsr_method_t method;
     fstr_t path;
     /// Requests headers. All keys are trimmed and lowercased. All values are trimmed.
     dict(fstr_t)* headers;
     dict(fstr_t)* url_params;
+    dict(fstr_t)* post_params;
 } wsr_req_t;
 
 decl_fid_t(wssr);
@@ -56,11 +63,17 @@ typedef struct wsr_rsp {
 /// Callback for http requests.
 typedef wsr_rsp_t (*wsr_req_cb_t)(wsr_req_t req, void* cb_arg);
 
+/// Callback for POST requests.
+typedef size_t (*wsr_pre_post_cb_t)(wsr_req_t req, void* cb_arg);
+
 typedef struct wsr_cfg {
     /// Address the http server should bind and listen to.
     rio_in_addr4_t bind;
     /// TCP backlog size.
     int32_t tcp_backlog;
+    /// Pre-request callback for POST requests. Returns the maximum allowed size
+    /// for request bodies, or 0 if no POST requests are allowed.
+    wsr_pre_post_cb_t pre_post_cb;
     /// TCP keep alive configuration.
     rio_tcp_ka_t tcp_ka;
     /// Callback for standard web requests.
