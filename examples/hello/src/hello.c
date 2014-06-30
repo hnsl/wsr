@@ -201,7 +201,7 @@ fstr_t serial_method(wsr_method_t method) {
 
 static wsr_rsp_t http_echo(wsr_req_t req) {
     list(fstr_t)* li = new_list(fstr_t);
-    list_push_end(li, fstr_t, "<!DOCTYPE html><plaintext style='color: #333; white-space: pre-wrap'>");
+    list_push_end(li, fstr_t, "<!DOCTYPE html><plaintext style='white-space: pre-wrap'>");
     list_push_end(li, fstr_t, concs("Method: ", serial_method(req.method), "\n"));
     list_push_end(li, fstr_t, concs("Path: ", req.path, "\n"));
     list_push_end(li, fstr_t, "\n** Headers:");
@@ -226,7 +226,18 @@ static wsr_rsp_t http_echo(wsr_req_t req) {
             list_push_end(li, fstr_t, ": ");
             list_push_end(li, fstr_t, value);
         }
+        list_push_end(li, fstr_t, "\n** POST files:");
+        dict_foreach(req.post_file_data, wsr_post_file_data_t, key, value) {
+            list_push_end(li, fstr_t, "\n - ");
+            list_push_end(li, fstr_t, key);
+            list_push_end(li, fstr_t, ": ");
+            list_push_end(li, fstr_t, value.file_name);
+            list_push_end(li, fstr_t, " (");
+            list_push_end(li, fstr_t, value.mime_type);
+            list_push_end(li, fstr_t, ")");
+        }
     }
+    list_push_end(li, fstr_t, "\n");
     fstr_mem_t* resp = fstr_implode(li, "");
     return wsr_response_dynamic(HTTP_OK, resp, wsr_mime_html);
 }

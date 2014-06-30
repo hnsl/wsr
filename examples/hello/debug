@@ -104,4 +104,4 @@ end
 
 ###### ADDITIONAL DEBUG COMMANDS STOP ######
 
-run
+run build/
