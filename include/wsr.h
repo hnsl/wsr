@@ -18,6 +18,11 @@ typedef enum wsr_method {
     METHOD_POST,
 } wsr_method_t;
 
+typedef struct wsr_post_file_data {
+    fstr_t file_name;
+    fstr_t mime_type;
+} wsr_post_file_data_t;
+
 /// An incoming http request.
 typedef struct wsr_req {
     wsr_method_t method;
@@ -26,6 +31,7 @@ typedef struct wsr_req {
     dict(fstr_t)* headers;
     dict(fstr_t)* url_params;
     dict(fstr_t)* post_params;
+    dict(wsr_post_file_data_t)* post_file_data;
 } wsr_req_t;
 
 decl_fid_t(wssr);

@@ -176,17 +176,6 @@ static inline bool parse_req_line(fstr_t req_line, fstr_t* out_method, fstr_t* o
     }
 }
 
-/// Remove an optional "; charset=<charset>" from a content-type header, returning
-/// false if the charset is anything but UTF-8 (the only thing we support).
-static bool content_type_consume_charset_utf8(fstr_t* raw_content_type) {
-    fstr_t str = *raw_content_type, c_content_type;
-#pragma ocre2c(str): \i ^ ([^ ;]*){c_content_type} (; \s* charset=utf-8)? $ {@match}
-    return false;
-match:
-    *raw_content_type = c_content_type;
-    return true;
-}
-
 static inline bool is_hex(uint8_t ch) {
     return
         ('0' <= ch && ch <= '9') ||
@@ -200,7 +189,7 @@ static inline uint32_t hex_to_int(uint8_t ch) {
     if ('a' <= ch && ch <= 'f') return ch - 'a' + 10;
 }
 
-static inline fstr_mem_t* decode_x_www_form_urlencoded(fstr_t enc) {
+static inline fstr_mem_t* decode_x_www_form_urlencoded(fstr_t enc, bool decode_space) {
     fstr_mem_t* out = fstr_alloc(enc.len);
     size_t out_i = 0;
     for (size_t i = 0; i < enc.len; i++) {
@@ -208,7 +197,7 @@ static inline fstr_mem_t* decode_x_www_form_urlencoded(fstr_t enc) {
         if (enc.str[i] == '%' && i + 2 < enc.len && is_hex(enc.str[i + 1]) && is_hex(enc.str[i + 2])) {
             ch = hex_to_int(enc.str[i + 1]) * 16 + hex_to_int(enc.str[i + 2]);
             i += 2;
-        } else if (enc.str[i] == '+') {
+        } else if (decode_space && enc.str[i] == '+') {
             ch = ' ';
         } else {
             ch = enc.str[i];
@@ -227,8 +216,8 @@ static void decode_many_x_www_form_urlencoded(fstr_t data, dict(fstr_t)* url_par
             enc_key = param;
             enc_value = "";
         }
-        fstr_t key = fss(decode_x_www_form_urlencoded(enc_key));
-        fstr_t value = fss(decode_x_www_form_urlencoded(enc_value));
+        fstr_t key = fss(decode_x_www_form_urlencoded(enc_key, true));
+        fstr_t value = fss(decode_x_www_form_urlencoded(enc_value, true));
         dict_replace(url_params, fstr_t, key, value);
     }
 }
@@ -237,6 +226,88 @@ static void request_header_error(rio_t* client_h) {
     // Return bad request and close connection.
     http_reply_simple_status(client_h, HTTP_BAD_REQUEST);
     throw("syntax error when parsing request header", exception_io);
+}
+
+static void decode_multipart_formdata(rio_t* client_h, fstr_t data, fstr_t boundary, dict(fstr_t)* params, dict(wsr_post_file_data_t)* file_data) {
+    fstr_t search_boundary = concs("\r\n--", boundary);
+    fstr_t first_search_boundary = fstr_sslice(search_boundary, 2, -1);
+    if (!fstr_prefixes(data, first_search_boundary))
+        request_header_error(client_h);
+    data = fstr_sslice(data, first_search_boundary.len, -1);
+    for (;;) {
+        if (fstr_prefixes(data, "--")) {
+            // Last data part.
+            return;
+        } else {
+            if (!fstr_prefixes(data, "\r\n"))
+                request_header_error(client_h);
+            data = fstr_sslice(data, 2, -1);
+            fstr_t content_disposition = "";
+            wsr_post_file_data_t file = {
+                .file_name = "",
+                .mime_type = "",
+            };
+            // Parse out all headers for this part. Content-Disposition has to exist, with
+            // value "form-data" and parameters "name" and optionally "filename". If the
+            // request represents a file upload, there is also a Content-Type header.
+            for (;;) {
+                fstr_t raw_header;
+                if (!fstr_iterate(&data, "\r\n", &raw_header))
+                    request_header_error(client_h);
+                if (raw_header.len == 0)
+                    break;
+                fstr_t key, value;
+                if (!fstr_divide(raw_header, ":", &key, &value))
+                    request_header_error(client_h);
+                key = fstr_trim(key);
+                value = fstr_trim(value);
+                if (fstr_equal_case(key, "content-disposition")) {
+                    content_disposition = value;
+                } else if (fstr_equal_case(key, "content-type")) {
+                    file.mime_type = value;
+                }
+            }
+            fstr_t disposition_type, disposition_params;
+            if (!fstr_divide(content_disposition, ";", &disposition_type, &disposition_params))
+                request_header_error(client_h);
+            if (!fstr_equal_case(disposition_type, "form-data"))
+                request_header_error(client_h);
+            // It's hard to overstate how much of a mess parsing of disposition type parameters is.
+            // Just flail wildly and hope for the best.
+            fstr_t name, file_name = "";
+            {
+                // ocre2c does terrible things to its input, so use three separate input variables.
+                fstr_t disp1 = disposition_params, disp2 = disp1, disp3 = disp1;
+                #pragma ocre2c(disp1): \i \
+                    ^ [ ]* name="(.*){name}"; [ ]* filename="(.*){file_name}" $ {@match}
+                #pragma ocre2c(disp2): \i \
+                    ^ [ ]* name="(.*){name}" $ {@match}
+                #pragma ocre2c(disp3): \i \
+                    ^ [ ]* name=([^; ]*){name} {@match}
+                request_header_error(client_h);
+            }
+match:
+            name = fss(fstr_replace(name, "\\\"", "\""));
+            name = fss(decode_x_www_form_urlencoded(name, false));
+            if (file_name.len > 0) {
+                file_name = fss(fstr_replace(file_name, "\\\"", "\""));
+                file_name = fss(decode_x_www_form_urlencoded(file_name, false));
+                file.file_name = file_name;
+            }
+            // Parse the rest of the data and insert it as POST data.
+            fstr_t value;
+            if (!fstr_iterate(&data, search_boundary, &value))
+                request_header_error(client_h);
+            if (file.mime_type.len > 0 && file.file_name.len == 0) {
+                // Browsers send an empty file name when leaving the <input type="file">
+                // field empty. Treat the field as non-existent in this case.
+                continue;
+            }
+            dict_replace(params, fstr_t, name, value);
+            if (file.mime_type.len > 0)
+                dict_replace(file_data, wsr_post_file_data_t, name, file);
+        }
+    }
 }
 
 typedef struct wss_cb_arg {
@@ -309,11 +380,26 @@ static wss_cb_arg_t http_session(rio_t* client_h, wsr_cfg_t cfg) {
         uint128_t content_length = (content_length_str != 0? fs2ui(*content_length_str): 0);
         if (req.method == METHOD_POST) {
             req.post_params = new_dict(fstr_t);
+            req.post_file_data = 0;
             fstr_t* maybe_content_type = dict_read(req.headers, fstr_t, "content-type");
             fstr_t content_type = (maybe_content_type != 0? *maybe_content_type: "");
-            if (!content_type_consume_charset_utf8(&content_type)) {
-                http_reply_simple_status(client_h, HTTP_BAD_REQUEST);
-                throw("unsupported content-type charset for POST request", exception_io);
+            fstr_t multipart_boundary = "", content_type_params;
+            if (fstr_divide(content_type, ";", &content_type, &content_type_params)) {
+                for (fstr_t part; fstr_iterate_trim(&content_type_params, ";", &part);) {
+                    fstr_t key, value;
+                    if (!fstr_divide(part, "=", &key, &value))
+                        request_header_error(client_h);
+                    if (fstr_equal_case(key, "charset") && !fstr_equal_case(value, "utf-8")) {
+                        http_reply_simple_status(client_h, HTTP_BAD_REQUEST);
+                        throw("unsupported content-type charset for POST request", exception_io);
+                    }
+                    if (fstr_equal_case(key, "boundary")) {
+                        if (value.len > 0 && value.str[0] == '"' && value.str[value.len - 1] == '"')
+                            multipart_boundary = fstr_sslice(value, 1, -2);
+                        else
+                            multipart_boundary = value;
+                    }
+                }
             }
             if (content_length_str == 0) {
                 http_reply_simple_status(client_h, HTTP_LENGTH_REQUIRED);
@@ -334,11 +420,13 @@ static wss_cb_arg_t http_session(rio_t* client_h, wsr_cfg_t cfg) {
             }
             fstr_t request_data = fss(fstr_alloc(content_length));
             rio_read_fill(client_h, request_data);
-            if (fstr_equal(content_type, "application/x-www-form-urlencoded")) {
+            if (fstr_equal_case(content_type, "application/x-www-form-urlencoded")) {
                 decode_many_x_www_form_urlencoded(request_data, req.post_params);
-            } else {
-                http_reply_simple_status(client_h, HTTP_BAD_REQUEST);
-                throw("POST request content-type not supported", exception_io);
+            } else if (fstr_equal_case(content_type, "multipart/form-data")) {
+                if (multipart_boundary.len == 0)
+                    request_header_error(client_h);
+                req.post_file_data = new_dict(wsr_post_file_data_t);
+                decode_multipart_formdata(client_h, request_data, multipart_boundary, req.post_params, req.post_file_data);
             }
         } else {
             if (content_length != 0 || dict_read(req.headers, fstr_t, "transfer-encoding") != 0) {
@@ -537,7 +625,7 @@ join_locked(fstr_mem_t*) web_socket_read(size_t limit, bool* out_binary, join_se
                         uint16_t status_code_nbo;
                         fstr_cpy_over(FSTR_PACK(status_code_nbo), buf, 0, 0);
                         status_code = RIO_NBO_SWAP16(status_code_nbo);
-                        close_reason = fstr_slice(buf, 2, buf.len);
+                        close_reason = fstr_sslice(buf, 2, -1);
                     }
                     wsr_web_socket_close(status_code, close_reason, writer_fid);
                     sub_heap {
@@ -692,7 +780,7 @@ fiber_main http_connection_fiber(fiber_main_attr, rio_t* client_h, wsr_cfg_t cfg
     // Handle web socket session.
     web_socket_session(client_h, wss_cb);
 } catch (exception_io | exception_desync, e) {
-    //DBG(fss(lwt_get_exception_dump(e)));
+    //DBGE(e);
 }}
 
 static bool contains_comma_separated(fstr_t values, fstr_t target) {
