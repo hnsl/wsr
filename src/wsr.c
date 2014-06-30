@@ -228,6 +228,18 @@ static void request_header_error(rio_t* client_h) {
     throw("syntax error when parsing request header", exception_io);
 }
 
+static void post_too_large_error(rio_t* client_h) {
+    http_reply_simple_status(client_h, HTTP_REQ_ENT_TOO_LARGE);
+    throw("too large POST request", exception_io);
+}
+
+static inline void read_crlf(rio_t* client_h) {
+    uint8_t buf[2];
+    rio_read_fill(client_h, FSTR_PACK(buf));
+    if (buf[0] != '\r' || buf[1] != '\n')
+        request_header_error(client_h);
+}
+
 static void decode_multipart_formdata(rio_t* client_h, fstr_t data, fstr_t boundary, dict(fstr_t)* params, dict(wsr_post_file_data_t)* file_data) {
     fstr_t search_boundary = concs("\r\n--", boundary);
     fstr_t first_search_boundary = fstr_sslice(search_boundary, 2, -1);
@@ -308,6 +320,29 @@ match:
                 dict_replace(file_data, wsr_post_file_data_t, name, file);
         }
     }
+}
+
+static fstr_mem_t* read_chunked_request(rio_t* client_h, size_t max_content_length) {
+    fstr_mem_t* out = fstr_alloc(max_content_length);
+    fstr_t buf = fss(out);
+    for (;;) {
+        fstr_t size_str = rio_read_to_separator(client_h, "\r\n", buf);
+        uint128_t size;
+        if (!fstr_unserial_uint(size_str, 16, &size))
+            request_header_error(client_h);
+        if (size > buf.len)
+            post_too_large_error(client_h);
+        if (size == 0)
+            break;
+        rio_read_fill(client_h, fstr_slice(buf, 0, size));
+        buf = fstr_sslice(buf, size, -1);
+        read_crlf(client_h);
+    }
+    // There is room for trailing headers here, but for now we don't support it.
+    // Assert that there is a trailing CRLF to read instead.
+    read_crlf(client_h);
+    out->len = buf.str - out->str;
+    return out;
 }
 
 typedef struct wss_cb_arg {
@@ -401,25 +436,28 @@ static wss_cb_arg_t http_session(rio_t* client_h, wsr_cfg_t cfg) {
                     }
                 }
             }
-            if (content_length_str == 0) {
+            bool chunked = false;
+            fstr_t* maybe_transfer_encoding = dict_read(req.headers, fstr_t, "transfer-encoding");
+            if (maybe_transfer_encoding != 0 && fstr_equal_case(*maybe_transfer_encoding, "chunked")) {
+                chunked = true;
+            } else if (content_length_str == 0) {
                 http_reply_simple_status(client_h, HTTP_LENGTH_REQUIRED);
                 throw("missing content-length of POST request", exception_io);
-            }
-            if (dict_read(req.headers, fstr_t, "transfer-encoding")) {
-                http_reply_simple_status(client_h, HTTP_BAD_REQUEST);
-                throw("transfer-encoding not supported", exception_io);
             }
             size_t max_content_length = cfg.pre_post_cb(req, cfg.cb_arg);
             if (max_content_length == 0) {
                 http_reply_simple_status(client_h, HTTP_METHOD_NOT_ALLOWED);
                 throw("POST requests not supported", exception_io);
             }
-            if (content_length > max_content_length) {
-                http_reply_simple_status(client_h, HTTP_REQ_ENT_TOO_LARGE);
-                throw("too large POST request", exception_io);
+            fstr_t request_data;
+            if (chunked) {
+                request_data = fss(read_chunked_request(client_h, max_content_length));
+            } else {
+                if (content_length > max_content_length)
+                    post_too_large_error(client_h);
+                request_data = fss(fstr_alloc(content_length));
+                rio_read_fill(client_h, request_data);
             }
-            fstr_t request_data = fss(fstr_alloc(content_length));
-            rio_read_fill(client_h, request_data);
             if (fstr_equal_case(content_type, "application/x-www-form-urlencoded")) {
                 decode_many_x_www_form_urlencoded(request_data, req.post_params);
             } else if (fstr_equal_case(content_type, "multipart/form-data")) {
