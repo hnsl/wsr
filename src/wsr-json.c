@@ -114,8 +114,7 @@ static fstr_mem_t* decode(fstr_t encoded) {
         uint8_t c2 = enc[index+1];
         index += 2;
         if (c2 == '\\') out[out_index++] = '\\';
-        else if (c2 == '\"') // XXX line break due to rcd-pp bug
-            out[out_index++] = '\"';
+        else if (c2 == '"') out[out_index++] = '"';
         else if (c2 == '/') out[out_index++] = '/';
         else if (c2 == 'b') out[out_index++] = '\b';
         else if (c2 == 'f') out[out_index++] = '\f';
@@ -291,8 +290,7 @@ static void stringify_string(fstr_t value, list(fstr_t)* parts) {
             case '\r': part = "\\r"; break;
             case '\n': part = "\\n"; break;
             case '\\': part = "\\\\"; break;
-            case '\"': // XXX line break due to rcd-pp bug
-                       part = "\\\""; break;
+            case '\"': part = "\\\""; break;
             default: goto next;
         }
         if (start != i)
