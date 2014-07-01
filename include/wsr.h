@@ -41,6 +41,16 @@ decl_fid_t(wssw);
 /// calls to wsr_web_socket_read and wsr_web_socket_write/wsr_web_socket_close, respectively.
 typedef void (*wsr_wss_cb_t)(rio_in_addr4_t peer, sf(wssr)* reader_sf, sf(wssw)* writer_sf, void* cb_arg);
 
+// Type for serialization to complete Set-Cookie header.
+typedef struct wsr_set_cookie {
+    fstr_t name;
+    fstr_t value;
+    uint128_t expires;
+    fstr_t domain;
+    bool secure;
+    bool httponly;
+} wsr_set_cookie_t;
+
 /// An outgoing http response.
 typedef struct wsr_rsp {
     /// Heap for response.
@@ -51,6 +61,8 @@ typedef struct wsr_rsp {
     fstr_t reason;
     /// Extra headers to send with the response or 0.
     dict(fstr_t)* headers;
+    /// Set-Cookie is special and constructed internally.
+    list(wsr_set_cookie_t)* set_cookies;
     /// If request should trigger a web socket connection, this is the
     /// corresponding callback for the web socket session, otherwise 0.
     wsr_wss_cb_t wss_cb;
@@ -196,6 +208,10 @@ void wsr_web_socket_close(wsr_ws_close_reason_t status_code, fstr_t data, fid(ws
 /// form, rather than text.
 fstr_mem_t* wsr_web_socket_read(size_t limit, fid(wssr) reader_fid, bool* out_binary);
 
+/// Parses Cookie headers into a cookie_name -> cookie_value dict, fails with
+/// io_exception if too malformed header.
+dict(fstr_t)* wsr_request_cookies(wsr_req_t req);
+
 /// Returns a simple response without a body.
 static inline wsr_rsp_t wsr_response(wsr_status_t status) {
     wsr_rsp_t rsp = {
@@ -213,8 +229,8 @@ static inline wsr_rsp_t wsr_response_static(wsr_status_t status, fstr_t body, fs
     switch_heap(rsp.heap) {
         rsp.headers = new_dict(fstr_t);
         (void) dict_insert(rsp.headers, fstr_t, fstr("content-type"), mime_type);
-        rsp.body_blob = body;
     }
+    rsp.body_blob = body;
     return rsp;
 }
 
@@ -264,4 +280,25 @@ static inline wsr_rsp_t wsr_response_web_socket(wsr_req_t req, wsr_wss_cb_t wss_
     return ws_rsp;
 }
 
+static inline void wsr_response_add_cookie(wsr_rsp_t* rsp, wsr_set_cookie_t set_cookie) {
+   if (rsp->heap == 0)
+       rsp->heap = lwt_alloc_heap();
+   if (rsp->set_cookies == 0)
+       rsp->set_cookies = new_list(wsr_set_cookie_t);
+   switch_heap(rsp->heap) {
+       list_push_end(rsp->set_cookies, wsr_set_cookie_t, set_cookie);
+   }
+}
+
+static inline wsr_set_cookie_t wsr_simple_cookie(fstr_t key, fstr_t value, fstr_t domain, uint128_t expires) {
+    wsr_set_cookie_t cookie = {
+        .name = key,
+        .value = value,
+        .domain = domain,
+        .expires = expires,
+        .httponly = true,
+        .secure = false,
+    };
+    return cookie;
+}
 #endif	/* WSR_H */

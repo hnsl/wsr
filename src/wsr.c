@@ -345,6 +345,29 @@ static fstr_mem_t* read_chunked_request(rio_t* client_h, size_t max_content_leng
     return out;
 }
 
+static fstr_mem_t* serialize_set_cookie(wsr_set_cookie_t set_cookie) {
+    list(fstr_t)* header_parts = new_list(fstr_t, "Set-Cookie: ");
+    // validate
+    list_push_end(header_parts, fstr_t, set_cookie.name);
+    list_push_end(header_parts, fstr_t, "=");
+    // validate
+    list_push_end(header_parts, fstr_t, set_cookie.value);
+    if (set_cookie.expires > 0) {
+        list_push_end(header_parts, fstr_t, "; Expires=");
+        list_push_end(header_parts, fstr_t, fss(rio_clock_to_rfc1123(set_cookie.expires)));
+    }
+    if (set_cookie.domain.len > 0) {
+        list_push_end(header_parts, fstr_t, "; Domain=");
+        list_push_end(header_parts, fstr_t, set_cookie.domain);
+    }
+    if (set_cookie.secure)
+        list_push_end(header_parts, fstr_t, "; Secure");
+    if (set_cookie.httponly)
+        list_push_end(header_parts, fstr_t, "; HttpOnly");
+    fstr_mem_t* serialized = fstr_implode(header_parts, "");
+    return serialized;
+}
+
 typedef struct wss_cb_arg {
     wsr_wss_cb_t wss_cb;
     void* cb_arg;
@@ -507,6 +530,11 @@ static wss_cb_arg_t http_session(rio_t* client_h, wsr_cfg_t cfg) {
             if (rsp.headers != 0) {
                 dict_foreach(rsp.headers, fstr_t, key, value) {
                     list_push_end(raw_headers, fstr_t, concs(key, ": ", value));
+                }
+            }
+            if (rsp.set_cookies != 0) {
+                list_foreach(rsp.set_cookies, wsr_set_cookie_t, set_cookie) {
+                    list_push_end(raw_headers, fstr_t, fss(serialize_set_cookie(set_cookie)));
                 }
             }
             bool has_body;
@@ -900,6 +928,35 @@ wsr_rsp_t wsr_response_file(wsr_req_t req, fstr_t base_path) { sub_heap {
         return wsr_response(HTTP_NOT_FOUND);
     }
 }}
+
+// Removes the special case that cookie-value can be wrapped in DQUOTEs.
+// cookie-value      = *cookie-octet / ( DQUOTE *cookie-octet DQUOTE )
+static fstr_t sanitize_cookie_value(fstr_t raw_cookie_value){
+    bool dquoted = false;
+    if (fstr_equal(fstr_slice(raw_cookie_value, 0, 1), "\"")) {
+        if (!fstr_equal(fstr_sslice(raw_cookie_value, -2, -1), "\""))
+            throw("invalid cookie-value", exception_io);
+        dquoted = true;
+    }
+    return dquoted? fstr_sslice(raw_cookie_value,1 ,-2): raw_cookie_value;
+}
+
+dict(fstr_t)* wsr_request_cookies(wsr_req_t req){
+    dict(fstr_t)* cookies = new_dict(fstr_t);
+    fstr_t* cookie_string_ptr = dict_read(req.headers, fstr_t, "cookie");
+    if (cookie_string_ptr == 0)
+        return cookies;
+    fstr_t cookie_string = *cookie_string_ptr;
+    fstr_t cookie_pair;
+    while (fstr_iterate(&cookie_string, "; ", &cookie_pair)) {
+        fstr_t cookie_name;
+        fstr_t cookie_value;
+        if (!fstr_divide(cookie_pair, "=", &cookie_name, &cookie_value))
+            throw("malformed cookie-pair", exception_io);
+        dict_replace(cookies, fstr_t, cookie_name, sanitize_cookie_value(cookie_value));
+    }
+    return cookies;
+}
 
 void wsr_start(wsr_cfg_t cfg) { sub_heap {
     assert(cfg.req_cb != 0);
