@@ -147,7 +147,7 @@ static inline void http_reply_raw_body(rio_t* client_h, fstr_t response, fstr_t 
         "\r\nContent-Type: text/html\r\n",
         extra_headers,
         "\r\n",
-        optional_body,
+        optional_body
     );
     rio_write(client_h, reply);
 }
