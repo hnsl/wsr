@@ -12,7 +12,7 @@
     "general-flags": [
         "-nostdlib",
         "-g",
-        "-std=c99",
+        "-std=gnu11",
         "-Werror"
     ],
     "pp-flags": [
