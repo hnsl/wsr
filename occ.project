@@ -3,8 +3,6 @@
     "preprocessor": "rcd-pp",
     "compiler": "rcd-i2o",
     "project-linker": "rcd-pl",
-    "pkg-config": [],
-    "installdir": "",
     "library": "static",
     "dependencies": [
         "librcd"
@@ -18,9 +16,6 @@
     "pp-flags": [
         "-nostdinca"
     ],
-    "o-flags": ["-mno-red-zone"],
-    "o-env": {},
-    "additional-src-dirs": [],
     "build-masks": {
         "test": {
             "output": "wsr.test.a",
@@ -40,7 +35,7 @@
         },
         "release": {
             "output": "wsr.a",
-            "o-flags": ["-O1 -fno-omit-frame-pointer"],
+            "o-flags": ["-O1"],
             "o-env": {
                 "LLC_ARGS": "-O1"
             }
