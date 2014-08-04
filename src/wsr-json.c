@@ -10,7 +10,7 @@ typedef struct {
 } parser_t;
 
 static inline void fail() {
-    throw("invalid json", exception_arg);
+    throw("invalid json", exception_io);
 }
 
 static inline void assume(bool b) {
@@ -363,5 +363,5 @@ fstr_mem_t* json_stringify(json_value_t value) { sub_heap {
 }}
 
 void json_fail_missing_property(fstr_t prop_name) {
-    sub_heap_e(throw(concs("missing JSON property: ", prop_name), exception_arg));
+    sub_heap_e(throw(concs("missing JSON property: ", prop_name), exception_io));
 }
