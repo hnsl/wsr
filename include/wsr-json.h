@@ -52,6 +52,13 @@ void json_fail_missing_property(fstr_t prop_name);
 #define json_array_value(x)  ((json_value_t){.type = JSON_ARRAY,  .array_value  = x})
 #define json_object_value(x) ((json_value_t){.type = JSON_OBJECT, .object_value = x})
 
+#define json_null_v json_null_value
+#define json_bool_v(x) json_bool_value(x)
+#define json_number_v(x) json_number_value(x)
+#define json_string_v(x) json_string_value(x)
+#define json_array_v(x) json_array_value(x)
+#define json_object_v(x) json_object_value(x)
+
 inline json_value_t json_new_object() {
     return json_object_value(new_dict(json_value_t));
 }
