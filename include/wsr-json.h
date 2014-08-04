@@ -3,6 +3,15 @@
 
 #include "rcd.h"
 
+#define json_for_obj(obj) \
+    for (uint8_t __i = 0; __i == 0;) \
+    for (json_value_t this = (obj); (__i++) == 0;)
+
+#define json_for_new_obj(key) \
+    for (uint8_t __i = 0; __i == 0;) \
+    for (json_value_t new_obj = json_new_object_in(this, (key)); __i == 0;) \
+    for (json_value_t this = new_obj; (__i++) == 0;)
+
 /// JSON type identifier. Basic types are:
 ///  o Object
 ///  o Array
