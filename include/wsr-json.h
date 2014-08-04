@@ -63,6 +63,12 @@ inline json_value_t json_new_object() {
     return json_object_value(new_dict(json_value_t));
 }
 
+inline json_value_t json_new_object_in(json_value_t parent, fstr_t key) {
+    json_value_t obj = json_new_object();
+    JSON_SET(parent, key, obj);
+    return obj;
+}
+
 /// Returns a number from a JSON value, throwing exception_arg if the type is wrong.
 inline double json_get_number(json_value_t value) {
     if (value.type != JSON_NUMBER)
