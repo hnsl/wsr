@@ -82,6 +82,7 @@ html_t* wsr_html_conc(size_t n_html, html_t* htmls) {
 html_t* wsr_html_implode(list(html_t*)* htmls) {
     html_t* buf = wsr_tpl_start();
     list_foreach(htmls, html_t*, html) {
+        assert(html != 0);
         for (size_t j = 0; j < html->n_total; j++)
             html_append_iov(html->iov[j], buf);
     }
