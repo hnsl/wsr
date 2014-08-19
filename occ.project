@@ -1,5 +1,4 @@
 {
-    "type": "c",
     "preprocessor": "rcd-pp",
     "compiler": "rcd-i2o",
     "project-linker": "rcd-pl",
@@ -8,25 +7,10 @@
         "librcd"
     ],
     "general-flags": [
-        "-nostdlib",
         "-g",
-        "-std=gnu11",
         "-Werror"
     ],
-    "pp-flags": [
-        "-nostdinca"
-    ],
     "build-masks": {
-        "test": {
-            "output": "wsr.test.a",
-            "library": "",
-	    "dependency-build-mask" : "debug",
-            "pp-flags": [
-                "-DDEBUG",
-                "-DOCLIB_TEST"
-            ],
-            "additional-src-dirs": ["tests"]
-        },
         "debug": {
             "output": "wsr.debug.a",
             "pp-flags": [
