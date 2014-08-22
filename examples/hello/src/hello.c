@@ -1,6 +1,6 @@
 #include "rcd.h"
+#include "json.h"
 #include "wsr.h"
-#include "wsr-json.h"
 #include "wsr-mime.h"
 
 #pragma librcd
@@ -169,7 +169,7 @@ static void ws_echo_json(rio_in_addr4_t peer, sf(wssr)* reader_sf, sf(wssw)* wri
                     // Then tree->value must have been an object.
                     fstr_t str = json_get_string(val);
                     json_value_t other = json_new_object();
-                    JSON_SET(other, "key", json_string_value(concs(str, str)));
+                    JSON_SET(other, "key", json_string_v(concs(str, str)));
                     JSON_SET(tree->value, "other", other);
                 }
                 frobnicate(&tree->value);
