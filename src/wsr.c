@@ -187,6 +187,7 @@ static inline uint32_t hex_to_int(uint8_t ch) {
     if ('0' <= ch && ch <= '9') return ch - '0';
     if ('A' <= ch && ch <= 'F') return ch - 'A' + 10;
     if ('a' <= ch && ch <= 'f') return ch - 'a' + 10;
+    unreachable();
 }
 
 static inline fstr_mem_t* decode_x_www_form_urlencoded(fstr_t enc, bool decode_space) {
