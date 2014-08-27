@@ -25,7 +25,7 @@
 #define WSR_READ_PEEK_BUF_SIZE (0x800)
 
 /// The default limit of POST request sizes, returned by default_pre_post_cb.
-#define WSR_DEFAULT_ACCEPTED_POST_SIZE (0x100000)
+#define WSR_DEFAULT_ACCEPTED_POST_SIZE (0x2000000)
 
 #pragma librcd
 
@@ -477,8 +477,12 @@ static wss_cb_arg_t http_session(rio_t* client_h, wsr_cfg_t cfg) {
             if (chunked) {
                 request_data = fss(read_chunked_request(client_h, max_content_length));
             } else {
-                if (content_length > max_content_length)
+                if (content_length > max_content_length) {
+                    DBG("post too large");
+                    DBG("content_length: ", ui2fs(content_length));
+                    DBG("max_length    : ", ui2fs(max_content_length));
                     post_too_large_error(client_h);
+                }
                 request_data = fss(fstr_alloc(content_length));
                 rio_read_fill(client_h, request_data);
             }
@@ -963,6 +967,9 @@ void wsr_start(wsr_cfg_t cfg) { sub_heap {
     assert(cfg.req_cb != 0);
     // Accept tcp connections.
     rio_t* server = rio_tcp_server(cfg.bind, cfg.tcp_backlog);
+    if (cfg.init_cb != 0) { 
+        cfg.init_cb(cfg.init_arg);
+    }
     for (;;) sub_heap {
         rio_in_addr4_t remote_addr;
         rio_t* raw_h = rio_tcp_accept(server, &remote_addr);

@@ -84,6 +84,9 @@ typedef wsr_rsp_t (*wsr_req_cb_t)(wsr_req_t req, void* cb_arg);
 /// Callback for POST requests.
 typedef size_t (*wsr_pre_post_cb_t)(wsr_req_t req, void* cb_arg);
 
+/// Callback for init.
+typedef void (*wsr_init_cb_t)(void* init_arg);
+
 typedef struct wsr_cfg {
     /// Address the http server should bind and listen to.
     rio_in_addr4_t bind;
@@ -98,6 +101,10 @@ typedef struct wsr_cfg {
     wsr_req_cb_t req_cb;
     /// Extra argument passed to callback.
     void* cb_arg;
+    /// Callback for init. Will be called when the wsr server is started.
+    wsr_init_cb_t init_cb;
+    /// Extra argument passed to init callback.
+    void* init_arg;
 } wsr_cfg_t;
 
 /// Standard http status codes.
