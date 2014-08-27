@@ -895,7 +895,7 @@ wsr_rsp_t wsr_response_file(wsr_req_t req, fstr_t base_path) { sub_heap {
             return wsr_response(HTTP_NOT_FOUND);
         // Verify that the absolute path of the file we opened really is path inside base_path.
         fstr_t abs_path = fss(rio_file_get_path(file_h));
-        if (!fstr_prefixes(abs_path, concs(base_path, "/")))
+        if (!fstr_prefixes(abs_path, concs(fss(rio_file_real_path(base_path)), "/")))
             return wsr_response(HTTP_NOT_FOUND);
         // We only use etag for caching. This is a minimal implementation and
         // sufficient for acceptable caching behavior in modern browsers.
