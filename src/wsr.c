@@ -477,12 +477,8 @@ static wss_cb_arg_t http_session(rio_t* client_h, wsr_cfg_t cfg) {
             if (chunked) {
                 request_data = fss(read_chunked_request(client_h, max_content_length));
             } else {
-                if (content_length > max_content_length) {
-                    DBG("post too large");
-                    DBG("content_length: ", ui2fs(content_length));
-                    DBG("max_length    : ", ui2fs(max_content_length));
+                if (content_length > max_content_length)
                     post_too_large_error(client_h);
-                }
                 request_data = fss(fstr_alloc(content_length));
                 rio_read_fill(client_h, request_data);
             }
