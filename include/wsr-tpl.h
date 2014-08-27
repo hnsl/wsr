@@ -13,7 +13,12 @@
 
 typedef struct html html_t;
 
-typedef struct wsr_tpl_ctx wsr_tpl_ctx_t;
+typedef struct wsr_tpl_ctx {
+    fstr_t root_tpl_path;
+    bool strict;
+    bool precompile;
+    dict(wsr_tpl_t*)* precompiled_partials;
+} wsr_tpl_ctx_t;
 
 dict(html_t);
 

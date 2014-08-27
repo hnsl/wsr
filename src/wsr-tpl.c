@@ -31,13 +31,6 @@ struct html {
     struct iovec* iov;
 };
 
-struct wsr_tpl_ctx {
-    fstr_t root_tpl_path;
-    bool strict;
-    bool precompile;
-    dict(wsr_tpl_t*)* precompiled_partials;
-};
-
 static size_t trq_iovcap_hint = 0x1;
 
 static wsr_tpl_t* compile_tpl(wsr_tpl_ctx_t* ctx, fstr_t tpl_path);
