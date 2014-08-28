@@ -191,7 +191,7 @@ static wsr_tpl_t* compile_tpl(wsr_tpl_ctx_t* ctx, fstr_t tpl_path) {
     return tpl;
 }
 
-static void tpl_execute(wsr_tpl_ctx_t* ctx, wsr_tpl_t* tpl, dict(html_t*)* partials, html_t* buf) {
+static void tpl_execute(wsr_tpl_ctx_t* ctx, wsr_tpl_t* tpl, dict(html_t*)* partials, html_t* buf, fstr_t tpl_path) {
     for (size_t i = 0; i < tpl->n_elems; i++) {
         wsr_elem_t elem = tpl->elems[i];
         switch (elem.type) {{
@@ -199,7 +199,7 @@ static void tpl_execute(wsr_tpl_ctx_t* ctx, wsr_tpl_t* tpl, dict(html_t*)* parti
             html_append(elem.val.html, buf);
             break;
         } case WSR_ELEM_TPL: {
-            tpl_execute(ctx, elem.val.tpl, partials, buf);
+            tpl_execute(ctx, elem.val.tpl, partials, buf, tpl_path);
             break;
         } case WSR_ELEM_PARTIAL: {
             fstr_t key = elem.val.partial_key;
@@ -207,7 +207,7 @@ static void tpl_execute(wsr_tpl_ctx_t* ctx, wsr_tpl_t* tpl, dict(html_t*)* parti
             if (partial_ptr == 0) {
                 if (!ctx->strict)
                     break;
-                throw(concs("invalid partial key [", key, "]"), exception_arg);
+                throw(concs("in tpl [", tpl_path,"], invalid partial key [", key, "]"), exception_arg);
             }
             html_t* partial = *partial_ptr;
             for (size_t i = 0; i < partial->n_total; i++)
@@ -219,7 +219,7 @@ static void tpl_execute(wsr_tpl_ctx_t* ctx, wsr_tpl_t* tpl, dict(html_t*)* parti
 
 void wsr_tpl_render(wsr_tpl_ctx_t* ctx, fstr_t tpl_path, dict(html_t*)* partials, html_t* buf) {
     wsr_tpl_t* template = ctx->precompile? get_precompiled_tpl(ctx, tpl_path): compile_tpl(ctx, tpl_path);
-    tpl_execute(ctx, template, partials, buf);
+    tpl_execute(ctx, template, partials, buf, tpl_path);
 }
 
 html_t* wsr_tpl_start() {
