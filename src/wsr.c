@@ -1,3 +1,7 @@
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+
 /* wsr.c - Web Scale RCD, minimal HTTP and Web Socket implementation. */
 /* This implementation has the ambition to be fast, minimal and incomplete. */
 /* The HTTP "Standard" is over engineered, bloated and horrible in general. */
