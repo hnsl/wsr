@@ -427,6 +427,7 @@ static wss_cb_arg_t http_session(rio_t* client_h, wsr_cfg_t cfg) {
         } else {
             req.path = path;
         }
+        req.path_tail = req.path;
         // Index headers from client.
         req.headers = new_dict(fstr_t);
         for (fstr_t raw_header; fstr_iterate_trim(&raw_headers, "\r\n", &raw_header);) {

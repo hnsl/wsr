@@ -31,6 +31,7 @@ typedef struct wsr_post_file_data {
 typedef struct wsr_req {
     wsr_method_t method;
     fstr_t path;
+    fstr_t path_tail;
     /// Requests headers. All keys are trimmed and lowercased. All values are trimmed.
     dict(fstr_t)* headers;
     dict(fstr_t)* url_params;
