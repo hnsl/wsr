@@ -298,6 +298,7 @@ wsr_rsp_t wsr_response_web_socket(wsr_req_t req, wsr_wss_cb_t wss_cb, fstr_t ws_
     return ws_rsp;
 }
 
+/// Creates a simple cookie. To delete a cookie, set the value to an empty string.
 wsr_set_cookie_t wsr_simple_cookie(fstr_t key, fstr_t value, uint128_t expires) {
     wsr_set_cookie_t cookie = {
         .name = key,
