@@ -50,6 +50,7 @@ typedef struct wsr_set_cookie {
     fstr_t name;
     fstr_t value;
     uint128_t expires;
+    fstr_t path;
     fstr_t domain;
     bool secure;
     bool httponly;
@@ -195,12 +196,6 @@ bool wsr_req_is_ws_open(wsr_req_t req);
 /// Note that the base path must be a real path.
 wsr_rsp_t wsr_response_file(wsr_req_t req, fstr_t base_path);
 
-/// Starts a wsr http server with specified configuration.
-/// Listens to specified socket and spawns a new static unsynchronized fiber
-/// for each connection that calls the configured callback handlers.
-/// This function never returns. Throws io exception on various io failures.
-void wsr_start(wsr_cfg_t cfg);
-
 /// Write a web socket message. Throws io exception.
 void wsr_web_socket_write(fstr_t data, bool binary, fid(wssw) writer_fid);
 
@@ -222,6 +217,19 @@ fstr_mem_t* wsr_web_socket_read(size_t limit, fid(wssr) reader_fid, bool* out_bi
 /// Parses Cookie headers into a cookie_name -> cookie_value dict, fails with
 /// io_exception if too malformed header.
 dict(fstr_t)* wsr_request_cookies(wsr_req_t req);
+
+/// Mutates a response, replacing any existing header with the same key with
+/// the specified value.
+void wsr_response_add_header(wsr_rsp_t* rsp, fstr_t key, fstr_t value);
+
+/// Mutates a response, adding the specified cookie.
+void wsr_response_add_cookie(wsr_rsp_t* rsp, wsr_set_cookie_t set_cookie);
+
+/// Starts a wsr http server with specified configuration.
+/// Listens to specified socket and spawns a new static unsynchronized fiber
+/// for each connection that calls the configured callback handlers.
+/// This function never returns. Throws io exception on various io failures.
+void wsr_start(wsr_cfg_t cfg);
 
 /// Returns a simple response without a body.
 static inline wsr_rsp_t wsr_response(wsr_status_t status) {
@@ -279,8 +287,7 @@ static inline wsr_rsp_t wsr_response_redirect(fstr_t path) {
     return rsp;
 }
 
-/// Returns a virtual response indicating that connection should be upgraded to web socket.
-static inline wsr_rsp_t wsr_response_web_socket(wsr_req_t req, wsr_wss_cb_t wss_cb, fstr_t ws_protocol, void* cb_arg) {
+wsr_rsp_t wsr_response_web_socket(wsr_req_t req, wsr_wss_cb_t wss_cb, fstr_t ws_protocol, void* cb_arg) {
     if (!wsr_req_is_ws_open(req))
         return wsr_response(HTTP_NO_CONTENT);
     wsr_rsp_t ws_rsp = {
@@ -291,29 +298,12 @@ static inline wsr_rsp_t wsr_response_web_socket(wsr_req_t req, wsr_wss_cb_t wss_
     return ws_rsp;
 }
 
-static inline void wsr_response_add_header(wsr_rsp_t* rsp, fstr_t key, fstr_t value) {
-   if (rsp->heap == 0)
-       rsp->heap = lwt_alloc_heap();
-   switch_heap(rsp->heap) {
-       dict_replace(rsp->headers, fstr_t, key, value);
-   }
-}
-
-static inline void wsr_response_add_cookie(wsr_rsp_t* rsp, wsr_set_cookie_t set_cookie) {
-   if (rsp->heap == 0)
-       rsp->heap = lwt_alloc_heap();
-   if (rsp->set_cookies == 0)
-       rsp->set_cookies = new_list(wsr_set_cookie_t);
-   switch_heap(rsp->heap) {
-       list_push_end(rsp->set_cookies, wsr_set_cookie_t, set_cookie);
-   }
-}
-
-static inline wsr_set_cookie_t wsr_simple_cookie(fstr_t key, fstr_t value, fstr_t domain, uint128_t expires) {
+wsr_set_cookie_t wsr_simple_cookie(fstr_t key, fstr_t value, uint128_t expires) {
     wsr_set_cookie_t cookie = {
         .name = key,
         .value = value,
-        .domain = domain,
+        .path = fstr("/"),
+        .domain = fstr(""),
         .expires = expires,
         .httponly = true,
         .secure = false,

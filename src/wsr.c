@@ -352,18 +352,24 @@ static fstr_mem_t* read_chunked_request(rio_t* client_h, size_t max_content_leng
 
 static fstr_mem_t* serialize_set_cookie(wsr_set_cookie_t set_cookie) {
     list(fstr_t)* header_parts = new_list(fstr_t, "Set-Cookie: ");
-    // validate
     list_push_end(header_parts, fstr_t, set_cookie.name);
     list_push_end(header_parts, fstr_t, "=");
-    // validate
-    list_push_end(header_parts, fstr_t, set_cookie.value);
-    if (set_cookie.expires > 0) {
-        list_push_end(header_parts, fstr_t, "; Expires=");
-        list_push_end(header_parts, fstr_t, fss(rio_clock_to_rfc1123(set_cookie.expires)));
+    bool delete_cookie = (set_cookie.value.len == 0);
+    if (delete_cookie) {
+        list_push_end(header_parts, fstr_t, "deleted");
+    } else {
+        list_push_end(header_parts, fstr_t, set_cookie.value);
     }
+    list_push_end(header_parts, fstr_t, "; Path=");
+    list_push_end(header_parts, fstr_t, set_cookie.path.len > 0? set_cookie.path: "/");
     if (set_cookie.domain.len > 0) {
         list_push_end(header_parts, fstr_t, "; Domain=");
         list_push_end(header_parts, fstr_t, set_cookie.domain);
+    }
+    if (delete_cookie || set_cookie.expires > 0) {
+        uint128_t expires = (delete_cookie? 0: set_cookie.expires);
+        list_push_end(header_parts, fstr_t, "; Expires=");
+        list_push_end(header_parts, fstr_t, fss(rio_clock_to_rfc1123(expires)));
     }
     if (set_cookie.secure)
         list_push_end(header_parts, fstr_t, "; Secure");
@@ -963,11 +969,29 @@ dict(fstr_t)* wsr_request_cookies(wsr_req_t req){
     return cookies;
 }
 
+void wsr_response_add_header(wsr_rsp_t* rsp, fstr_t key, fstr_t value) {
+   if (rsp->heap == 0)
+       rsp->heap = lwt_alloc_heap();
+   switch_heap(rsp->heap) {
+       dict_replace(rsp->headers, fstr_t, key, value);
+   }
+}
+
+void wsr_response_add_cookie(wsr_rsp_t* rsp, wsr_set_cookie_t set_cookie) {
+   if (rsp->heap == 0)
+       rsp->heap = lwt_alloc_heap();
+   if (rsp->set_cookies == 0)
+       rsp->set_cookies = new_list(wsr_set_cookie_t);
+   switch_heap(rsp->heap) {
+       list_push_end(rsp->set_cookies, wsr_set_cookie_t, set_cookie);
+   }
+}
+
 void wsr_start(wsr_cfg_t cfg) { sub_heap {
     assert(cfg.req_cb != 0);
     // Accept tcp connections.
     rio_t* server = rio_tcp_server(cfg.bind, cfg.tcp_backlog);
-    if (cfg.init_cb != 0) { 
+    if (cfg.init_cb != 0) {
         cfg.init_cb(cfg.init_arg);
     }
     for (;;) sub_heap {
