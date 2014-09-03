@@ -291,6 +291,14 @@ static inline wsr_rsp_t wsr_response_web_socket(wsr_req_t req, wsr_wss_cb_t wss_
     return ws_rsp;
 }
 
+static inline void wsr_response_add_header(wsr_rsp_t* rsp, fstr_t key, fstr_t value) {
+   if (rsp->heap == 0)
+       rsp->heap = lwt_alloc_heap();
+   switch_heap(rsp->heap) {
+       dict_replace(rsp->headers, fstr_t, key, value);
+   }
+}
+
 static inline void wsr_response_add_cookie(wsr_rsp_t* rsp, wsr_set_cookie_t set_cookie) {
    if (rsp->heap == 0)
        rsp->heap = lwt_alloc_heap();
