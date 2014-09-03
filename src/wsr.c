@@ -406,7 +406,7 @@ static wss_cb_arg_t http_session(rio_t* client_h, wsr_cfg_t cfg) {
         fstr_t req_line;
         if (!fstr_iterate_trim(&raw_headers, "\r\n", &req_line))
             request_header_error(client_h);
-        wsr_req_t req;
+        wsr_req_t req = {0};
         fstr_t method, path, version;
         if (!parse_req_line(req_line, &method, &path, &version))
             request_header_error(client_h);
@@ -483,22 +483,21 @@ static wss_cb_arg_t http_session(rio_t* client_h, wsr_cfg_t cfg) {
                 http_reply_simple_status(client_h, HTTP_METHOD_NOT_ALLOWED);
                 throw("POST requests not supported", exception_io);
             }
-            fstr_t request_data;
             if (chunked) {
-                request_data = fss(read_chunked_request(client_h, max_content_length));
+                req.post_body = fss(read_chunked_request(client_h, max_content_length));
             } else {
                 if (content_length > max_content_length)
                     post_too_large_error(client_h);
-                request_data = fss(fstr_alloc(content_length));
-                rio_read_fill(client_h, request_data);
+                req.post_body = fss(fstr_alloc(content_length));
+                rio_read_fill(client_h, req.post_body);
             }
             if (fstr_equal_case(content_type, "application/x-www-form-urlencoded")) {
-                decode_many_x_www_form_urlencoded(request_data, req.post_params);
+                decode_many_x_www_form_urlencoded(req.post_body, req.post_params);
             } else if (fstr_equal_case(content_type, "multipart/form-data")) {
                 if (multipart_boundary.len == 0)
                     request_header_error(client_h);
                 req.post_file_data = new_dict(wsr_post_file_data_t);
-                decode_multipart_formdata(client_h, request_data, multipart_boundary, req.post_params, req.post_file_data);
+                decode_multipart_formdata(client_h, req.post_body, multipart_boundary, req.post_params, req.post_file_data);
             }
         } else {
             if (content_length != 0 || dict_read(req.headers, fstr_t, "transfer-encoding") != 0) {

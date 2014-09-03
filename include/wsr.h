@@ -34,6 +34,8 @@ typedef struct wsr_req {
     /// Requests headers. All keys are trimmed and lowercased. All values are trimmed.
     dict(fstr_t)* headers;
     dict(fstr_t)* url_params;
+    /// Raw unparsed request post body.
+    fstr_t post_body;
     dict(fstr_t)* post_params;
     dict(wsr_post_file_data_t)* post_file_data;
 } wsr_req_t;
