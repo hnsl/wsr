@@ -289,7 +289,8 @@ static inline wsr_rsp_t wsr_response_redirect(fstr_t path) {
     return rsp;
 }
 
-wsr_rsp_t wsr_response_web_socket(wsr_req_t req, wsr_wss_cb_t wss_cb, fstr_t ws_protocol, void* cb_arg) {
+/// Returns a virtual response indicating that connection should be upgraded to web socket.
+static inline wsr_rsp_t wsr_response_web_socket(wsr_req_t req, wsr_wss_cb_t wss_cb, fstr_t ws_protocol, void* cb_arg) {
     if (!wsr_req_is_ws_open(req))
         return wsr_response(HTTP_NO_CONTENT);
     wsr_rsp_t ws_rsp = {
