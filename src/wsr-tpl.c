@@ -8,9 +8,13 @@
 
 #pragma librcd
 
+define_eio(wsr_not_cpl);
+
+define_eio(wsr_tpl_invalid);
+
 typedef enum wsr_elem_type {
-    WSR_ELEM_HTML,
-    WSR_ELEM_TPL,
+    WSR_ELEM_STATIC,
+    WSR_ELEM_INCLUDE,
     WSR_ELEM_PARTIAL,
 } wsr_elem_type_t;
 
@@ -37,7 +41,7 @@ struct html {
 
 static size_t trq_iovcap_hint = 0x1;
 
-static wsr_tpl_t* compile_tpl(wsr_tpl_ctx_t* ctx, fstr_t tpl_path);
+static wsr_tpl_t* get_tpl_from_file(wsr_tpl_ctx_t* ctx, dict(wsr_tpl_t*)* partials_in, fstr_t tpl_path) ;
 
 static void html_append_iov(struct iovec iov, html_t* buf) {
     if (iov.iov_len == 0)
@@ -120,89 +124,194 @@ html_t* wsr_html_escape(fstr_t str) {
     return buf;
 }
 
-static wsr_tpl_t* get_precompiled_tpl(wsr_tpl_ctx_t* ctx, fstr_t tpl_path) {
-    wsr_tpl_t** prepared_tpl_ptr = dict_read(ctx->precompiled_partials, wsr_tpl_t*, tpl_path);
-    if (prepared_tpl_ptr == 0)
-        throw(concs("template [", tpl_path, "]not compiled"), exception_arg);
-    return *prepared_tpl_ptr;
+static wsr_tpl_t* get_compiled_tpl(dict(wsr_tpl_t*)* partials, fstr_t tpl_path) {
+    wsr_tpl_t** tpl_ptr = dict_read(partials, wsr_tpl_t*, tpl_path);
+    if (tpl_ptr == 0)
+        throw_eio(concs("template [", tpl_path, "]not compiled"), wsr_not_cpl);
+    return *tpl_ptr;
 }
 
-static wsr_tpl_t* inner_compile_tpl(wsr_tpl_ctx_t* ctx, fstr_t tpl_path) { sub_heap_txn(heap) {
-    DBGFN("compiling: [", tpl_path ,"]");
-    fstr_t raw_tpl_path = concs(ctx->root_tpl_path, "/", tpl_path);
+static fstr_t tpl_filename(fstr_t tpl_id) {
+    fstr_t filename;
+    if (fstr_prefixes(tpl_id, "head@") || fstr_prefixes(tpl_id, "foot@")) {
+        if (!fstr_divide(tpl_id, "@", 0, &filename))
+            throw_eio(concs("invalid template id [", tpl_id, "]"), wsr_tpl_invalid);
+    } else
+        filename = tpl_id;
+    return filename;
+}
+
+static fstr_mem_t* read_tpl_file(wsr_tpl_ctx_t* ctx, fstr_t filename) {
+    fstr_t raw_tpl_path = concs(ctx->root_tpl_path, "/", filename);
     if (!rio_file_exists(raw_tpl_path))
-        throw(concs("could not find template [", tpl_path, "]"), exception_arg);
-    fstr_mem_t* raw_tpl_mem = rio_read_file_contents(raw_tpl_path);
-    list(wsr_elem_t)* elems = new_list(wsr_elem_t);
+        throw_eio(concs("could not find template [", filename, "]"), wsr_tpl_invalid);
+    return rio_read_file_contents(raw_tpl_path);
+}
+
+static void inner_compile_tpl(wsr_tpl_ctx_t* ctx, dict(wsr_tpl_t*)* partials, fstr_t tpl_id) { sub_heap_txn(heap) {
+    typedef struct tpl_part {
+        wsr_elem_type_t type;
+        union {
+            fstr_t id;
+            fstr_t html;
+        } val;
+    } tpl_part_t;
+    typedef struct virt_tpl {
+        fstr_t id;
+        list(tpl_part_t)* parts;
+    } virt_tpl_t;
+    DBGFN("compiling: [", tpl_id ,"]");
+    fstr_t filename = tpl_filename(tpl_id);
+    fstr_mem_t* raw_tpl_mem = read_tpl_file(ctx, filename);
+    bool expect_wrapper = !fstr_equal(tpl_id, filename);
+    bool is_wrapper = false;
+    list(fstr_t)* wrapper_stack = new_list(fstr_t);
+    // First parse out all wsr-tpl tags so we can tell if this is a wrapper.
+    list(tpl_part_t)* parts = new_list(tpl_part_t);
+    list(virt_tpl_t)* v_templates = new_list(virt_tpl_t);
     for (fstr_t tpl = fss(raw_tpl_mem), html; fstr_iterate(&tpl, "<{", &html);) {
         if (html.len > 0) {
-            wsr_elem_t elem = {
-                .type = WSR_ELEM_HTML,
+            tpl_part_t part = {
+                .type = WSR_ELEM_STATIC,
                 .val.html = html,
             };
-            list_push_end(elems, wsr_elem_t, elem);
+            list_push_end(parts, tpl_part_t, part);
         }
         fstr_t tpl_tag;
         if (!fstr_iterate_trim(&tpl, "}>", &tpl_tag))
             break;
-        fstr_t prefix = fstr_slice(tpl_tag, 0, 1);
-        if (fstr_equal(prefix, "$")) {
-            wsr_elem_t elem = {
+        // Dynamic element reference.
+        if (fstr_prefixes(tpl_tag, "$")) {
+            tpl_part_t part = {
                 .type = WSR_ELEM_PARTIAL,
-                .val.partial_key = fstr_trim(fstr_sslice(tpl_tag, 1, -1)),
+                .val.id = fstr_trim(fstr_sslice(tpl_tag, 1, -1)),
             };
-            list_push_end(elems, wsr_elem_t, elem);
-        } else if (fstr_equal(prefix, "/")) {
-            wsr_tpl_t* tpl;
-            switch_heap (heap) {
-                tpl = compile_tpl(ctx, tpl_tag);
-            }
-            wsr_elem_t elem = {
-                .type = WSR_ELEM_TPL,
-                .val.tpl = tpl,
+            list_push_end(parts, tpl_part_t, part);
+        // Include file as element.
+        } else if (fstr_prefixes(tpl_tag, "/")) {
+            tpl_part_t part = {
+                .type = WSR_ELEM_INCLUDE,
+                .val.id = tpl_tag,
             };
-            list_push_end(elems, wsr_elem_t, elem);
+            list_push_end(parts, tpl_part_t, part);
+        // Begin a new wrapping.
+        } else if (fstr_prefixes(tpl_tag, "wrap:")) {
+            fstr_t tpl_path;
+            fstr_divide(tpl_tag, "wrap:", 0, &tpl_path);
+            list_push_end(wrapper_stack, fstr_t, tpl_path);
+            tpl_part_t part = {
+                .type = WSR_ELEM_INCLUDE,
+                .val.id = concs("head@", tpl_path),
+            };
+            list_push_end(parts, tpl_part_t, part);
+        // Finnish a wrapping.
+        } else if (fstr_prefixes(tpl_tag, "!wrap")) {
+            if (list_count(wrapper_stack, fstr_t) < 1)
+                throw_eio(concs("template [,", tpl_id, "] contains invalid <{!wrap}>"), wsr_tpl_invalid);
+            fstr_t wrapper_id = list_pop_end(wrapper_stack, fstr_t);
+            tpl_part_t part = {
+                .type = WSR_ELEM_INCLUDE,
+                .val.id = concs("foot@", wrapper_id),
+            };
+            list_push_end(parts, tpl_part_t, part);
+        // This template defines a wrapper, we are now done building the header,
+        // start building the footer.
+        } else if (fstr_equal(tpl_tag, "wrap_content")) {
+            if (is_wrapper)
+                throw_eio(concs("template [,", tpl_id, "] contains more than one <{wrap_content}>"), wsr_tpl_invalid);
+            is_wrapper = true;
+            // Everything until now was the header.
+            virt_tpl_t header = {
+                .id = concs("head@", filename),
+                .parts = parts,
+            };
+            list_push_end(v_templates, virt_tpl_t, header);
+            parts = new_list(tpl_part_t);
         } else {
-            throw(concs("did not understand tpl tag [", tpl_tag, "]"), exception_arg);
+            throw_eio(concs("did not understand tpl tag [", tpl_tag, "]"), wsr_tpl_invalid);
         }
     }
-    switch_heap (heap) {
-        import_list(raw_tpl_mem);
-        size_t n_elems = list_count(elems, wsr_elem_t);
-        wsr_tpl_t* tpl = lwt_alloc_new(sizeof(wsr_tpl_t) + sizeof(wsr_elem_t) * n_elems);
-        tpl->n_elems = n_elems;
-        size_t i = 0;
-        list_foreach(elems, wsr_elem_t, elem) {
-            tpl->elems[i] = elem;
-            i++;
+    if (expect_wrapper && !is_wrapper)
+        throw_eio(concs("expected wrapper template in [", filename, "]"), wsr_tpl_invalid);
+    fstr_t last_tpl_id = is_wrapper? concs("foot@", filename): filename;
+    virt_tpl_t tpl = {
+        .id = last_tpl_id,
+        .parts = parts,
+    };
+    list_push_end(v_templates, virt_tpl_t, tpl);
+    // Time to build element-trees for all templates in file.
+    list_foreach(v_templates, virt_tpl_t, v_tpl) {
+        list(wsr_elem_t)* elems = new_list(wsr_elem_t);
+        list_foreach(v_tpl.parts, tpl_part_t, part) {
+            switch (part.type) {{
+            } case WSR_ELEM_STATIC: {
+                wsr_elem_t elem = {
+                    .type = part.type,
+                    .val.html = part.val.html,
+                };
+                list_push_end(elems, wsr_elem_t, elem);
+                break;
+            } case WSR_ELEM_PARTIAL: {
+                wsr_elem_t elem = {
+                    .type = part.type,
+                    .val.partial_key = part.val.id,
+                };
+                list_push_end(elems, wsr_elem_t, elem);
+                break;
+            } case WSR_ELEM_INCLUDE: {
+                wsr_tpl_t* tpl;
+                switch_heap (heap) {
+                    tpl = get_tpl_from_file(ctx, partials, part.val.id);
+                }
+                wsr_elem_t elem = {
+                    .type = WSR_ELEM_INCLUDE,
+                    .val.tpl = tpl,
+                };
+                list_push_end(elems, wsr_elem_t, elem);
+                break;
+            }}
         }
-        return tpl;
+        switch_heap (heap) {
+            import_list(raw_tpl_mem);
+            size_t n_elems = list_count(elems, wsr_elem_t);
+            wsr_tpl_t* tpl = lwt_alloc_new(sizeof(wsr_tpl_t) + sizeof(wsr_elem_t) * n_elems);
+            tpl->n_elems = n_elems;
+            size_t i = 0;
+            list_foreach(elems, wsr_elem_t, elem) {
+                tpl->elems[i] = elem;
+                i++;
+            }
+            /// Insert all tags this file declares.
+            DBGFN("inserting tpl [", v_tpl.id,"]");
+            (void)dict_insert(partials, wsr_tpl_t*, v_tpl.id, tpl);
+        }
     }
 }}
 
-static wsr_tpl_t* compile_tpl(wsr_tpl_ctx_t* ctx, fstr_t tpl_path) {
-    wsr_tpl_t* tpl = 0;
-    if (ctx->precompile) {
-        try {
-            tpl = get_precompiled_tpl(ctx, tpl_path);
-        } catch(exception_arg, e){
-            tpl = inner_compile_tpl(ctx, tpl_path);
-            (void)dict_insert(ctx->precompiled_partials, wsr_tpl_t*, tpl_path, tpl);
-        }
-    } else {
-        tpl = inner_compile_tpl(ctx, tpl_path);
+static void compile_tpl_file(wsr_tpl_ctx_t* ctx, dict(wsr_tpl_t*)* partials, fstr_t tpl_path) {
+    try {
+        (void) get_compiled_tpl(partials, tpl_path);
+    } catch_eio(wsr_not_cpl, e){
+        inner_compile_tpl(ctx, partials, tpl_path);
     }
-    return tpl;
+}
+
+static wsr_tpl_t* get_tpl_from_file(wsr_tpl_ctx_t* ctx, dict(wsr_tpl_t*)* partials_in, fstr_t tpl_path) {
+    dict(wsr_tpl_t*)* partials = partials_in;
+    if (partials == 0)
+        partials = (ctx->precompile)? ctx->precompiled_partials: new_dict(wsr_tpl_t*);
+    compile_tpl_file(ctx, partials, tpl_path);
+    return get_compiled_tpl(partials, tpl_path);
 }
 
 static void tpl_execute(wsr_tpl_ctx_t* ctx, wsr_tpl_t* tpl, dict(html_t*)* partials, html_t* buf, fstr_t tpl_path) {
     for (size_t i = 0; i < tpl->n_elems; i++) {
         wsr_elem_t elem = tpl->elems[i];
         switch (elem.type) {{
-        } case WSR_ELEM_HTML: {
+        } case WSR_ELEM_STATIC: {
             html_append(elem.val.html, buf);
             break;
-        } case WSR_ELEM_TPL: {
+        } case WSR_ELEM_INCLUDE: {
             tpl_execute(ctx, elem.val.tpl, partials, buf, tpl_path);
             break;
         } case WSR_ELEM_PARTIAL: {
@@ -222,7 +331,7 @@ static void tpl_execute(wsr_tpl_ctx_t* ctx, wsr_tpl_t* tpl, dict(html_t*)* parti
 }
 
 void wsr_tpl_render(wsr_tpl_ctx_t* ctx, fstr_t tpl_path, dict(html_t*)* partials, html_t* buf) {
-    wsr_tpl_t* template = ctx->precompile? get_precompiled_tpl(ctx, tpl_path): compile_tpl(ctx, tpl_path);
+    wsr_tpl_t* template = ctx->precompile? get_compiled_tpl(ctx->precompiled_partials, tpl_path): get_tpl_from_file(ctx, 0, tpl_path);
     tpl_execute(ctx, template, partials, buf, tpl_path);
 }
 
@@ -287,7 +396,7 @@ static void compile_templates_at(wsr_tpl_ctx_t* ctx, fstr_t tpl_rel_path) { sub_
         break;
     } case rio_file_type_regular: {
         switch_heap(heap) {
-            compile_tpl(ctx, tpl_rel_path);
+            compile_tpl_file(ctx, ctx->precompiled_partials, tpl_rel_path);
         }
         break;
     } default: {
