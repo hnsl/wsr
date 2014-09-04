@@ -177,8 +177,8 @@ static void ws_echo_json(rio_in_addr4_t peer, sf(wssr)* reader_sf, sf(wssw)* wri
                 frobnicate(&tree->value);
                 fstr_t resp = fss(json_stringify(tree->value));
                 wsr_web_socket_write(resp, false, writer_fid);
-            } catch (exception_arg, e) {
-                wsr_web_socket_write("failure", false, writer_fid);
+            } catch_eio (json_parse, e) {
+                wsr_web_socket_write(e->message, false, writer_fid);
                 //*x-dbg*/ DBGE(e);
             }
         }
