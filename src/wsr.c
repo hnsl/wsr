@@ -128,7 +128,7 @@ fstr_t wsr_reason(wsr_status_t status) {
     }
 }
 
-static size_t default_pre_post_cb(wsr_req_t req, void* cb_arg) {
+static size_t default_pre_post_cb(wsr_req_t* req, void* cb_arg) {
     return WSR_DEFAULT_ACCEPTED_POST_SIZE;
 }
 
@@ -478,7 +478,7 @@ static wss_cb_arg_t http_session(rio_t* client_h, wsr_cfg_t cfg) {
                 http_reply_simple_status(client_h, HTTP_LENGTH_REQUIRED);
                 throw("missing content-length of POST request", exception_io);
             }
-            size_t max_content_length = cfg.pre_post_cb(req, cfg.cb_arg);
+            size_t max_content_length = cfg.pre_post_cb(&req, cfg.cb_arg);
             if (max_content_length == 0) {
                 http_reply_simple_status(client_h, HTTP_METHOD_NOT_ALLOWED);
                 throw("POST requests not supported", exception_io);
@@ -506,7 +506,7 @@ static wss_cb_arg_t http_session(rio_t* client_h, wsr_cfg_t cfg) {
             }
         }
         // Pass request to callback and get response.
-        wsr_rsp_t rsp = cfg.req_cb(req, cfg.cb_arg);
+        wsr_rsp_t rsp = cfg.req_cb(&req, cfg.cb_arg);
         // Handle possible web socket upgrade.
         if (rsp.wss_cb != 0) {
             fstr_t* ws_version = dict_read(req.headers, fstr_t, "sec-websocket-version");
@@ -867,11 +867,11 @@ static bool contains_comma_separated(fstr_t values, fstr_t target) {
     return false;
 }
 
-bool wsr_req_is_ws_open(wsr_req_t req) {
-    fstr_t* upgrade_hdr = dict_read(req.headers, fstr_t, "upgrade");
+bool wsr_req_is_ws_open(wsr_req_t* req) {
+    fstr_t* upgrade_hdr = dict_read(req->headers, fstr_t, "upgrade");
     if (upgrade_hdr == 0 || !contains_comma_separated(*upgrade_hdr, "websocket"))
         return false;
-    fstr_t* connection_hdr = dict_read(req.headers, fstr_t, "connection");
+    fstr_t* connection_hdr = dict_read(req->headers, fstr_t, "connection");
     if (connection_hdr == 0 || !contains_comma_separated(*connection_hdr, "Upgrade"))
         return false;
     return true;
@@ -888,8 +888,8 @@ static fstr_mem_t* wsr_etag(rio_stat_t st) {
     return fstr_hexencode(bin_etag);
 }
 
-wsr_rsp_t wsr_response_file(wsr_req_t req, fstr_t base_path) { sub_heap {
-    if (req.path.len == 0 || req.path.str[0] != '/' || base_path.len == 0)
+wsr_rsp_t wsr_response_file(wsr_req_t* req, fstr_t base_path) { sub_heap {
+    if (req->path.len == 0 || req->path.str[0] != '/' || base_path.len == 0)
         return wsr_response(HTTP_NOT_FOUND);
     try {
         // Base path is absolute per definition but may still contain a single
@@ -897,7 +897,7 @@ wsr_rsp_t wsr_response_file(wsr_req_t req, fstr_t base_path) { sub_heap {
         if (base_path.str[base_path.len - 1] == '/')
             base_path.len--;
         // Open the file we are supposed to send.
-        rio_t* file_h = rio_file_open(concs(base_path, req.path), true, false);
+        rio_t* file_h = rio_file_open(concs(base_path, req->path), true, false);
         // Check that we really opened a regular file.
         rio_stat_t st = rio_file_fstat(file_h);
         if (st.file_type != rio_file_type_regular)
@@ -909,7 +909,7 @@ wsr_rsp_t wsr_response_file(wsr_req_t req, fstr_t base_path) { sub_heap {
         // We only use etag for caching. This is a minimal implementation and
         // sufficient for acceptable caching behavior in modern browsers.
         fstr_mem_t* etag = wsr_etag(st);
-        fstr_t* client_etag = dict_read(req.headers, fstr_t, "if-none-match");
+        fstr_t* client_etag = dict_read(req->headers, fstr_t, "if-none-match");
         if (client_etag != 0 && fstr_equal(*client_etag, fss(etag)))
             return wsr_response(HTTP_NOT_MODIFIED);
         // Determine the content type by checking file extension.
@@ -951,9 +951,9 @@ static fstr_t sanitize_cookie_value(fstr_t raw_cookie_value){
     return dquoted? fstr_sslice(raw_cookie_value,1 ,-2): raw_cookie_value;
 }
 
-dict(fstr_t)* wsr_request_cookies(wsr_req_t req){
+dict(fstr_t)* wsr_request_cookies(wsr_req_t* req){
     dict(fstr_t)* cookies = new_dict(fstr_t);
-    fstr_t* cookie_string_ptr = dict_read(req.headers, fstr_t, "cookie");
+    fstr_t* cookie_string_ptr = dict_read(req->headers, fstr_t, "cookie");
     if (cookie_string_ptr == 0)
         return cookies;
     fstr_t cookie_string = *cookie_string_ptr;

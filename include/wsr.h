@@ -86,10 +86,10 @@ typedef struct wsr_rsp {
 } wsr_rsp_t;
 
 /// Callback for http requests.
-typedef wsr_rsp_t (*wsr_req_cb_t)(wsr_req_t req, void* cb_arg);
+typedef wsr_rsp_t (*wsr_req_cb_t)(wsr_req_t* req, void* cb_arg);
 
 /// Callback for POST requests.
-typedef size_t (*wsr_pre_post_cb_t)(wsr_req_t req, void* cb_arg);
+typedef size_t (*wsr_pre_post_cb_t)(wsr_req_t* req, void* cb_arg);
 
 /// Callback for init.
 typedef void (*wsr_init_cb_t)(void* init_arg);
@@ -192,11 +192,11 @@ fstr_t wsr_reason(wsr_status_t status);
 wsr_cfg_t wsr_default_cfg();
 
 /// Returns true if request is a web socket open.
-bool wsr_req_is_ws_open(wsr_req_t req);
+bool wsr_req_is_ws_open(wsr_req_t* req);
 
 /// Safely respond with a file read from the file system with proper caching.
 /// Note that the base path must be a real path.
-wsr_rsp_t wsr_response_file(wsr_req_t req, fstr_t base_path);
+wsr_rsp_t wsr_response_file(wsr_req_t* req, fstr_t base_path);
 
 /// Write a web socket message. Throws io exception.
 void wsr_web_socket_write(fstr_t data, bool binary, fid(wssw) writer_fid);
@@ -218,7 +218,7 @@ fstr_mem_t* wsr_web_socket_read(size_t limit, fid(wssr) reader_fid, bool* out_bi
 
 /// Parses Cookie headers into a cookie_name -> cookie_value dict, fails with
 /// io_exception if too malformed header.
-dict(fstr_t)* wsr_request_cookies(wsr_req_t req);
+dict(fstr_t)* wsr_request_cookies(wsr_req_t* req);
 
 /// Mutates a response, replacing any existing header with the same key with
 /// the specified value.
@@ -290,7 +290,7 @@ static inline wsr_rsp_t wsr_response_redirect(fstr_t path) {
 }
 
 /// Returns a virtual response indicating that connection should be upgraded to web socket.
-static inline wsr_rsp_t wsr_response_web_socket(wsr_req_t req, wsr_wss_cb_t wss_cb, fstr_t ws_protocol, void* cb_arg) {
+static inline wsr_rsp_t wsr_response_web_socket(wsr_req_t* req, wsr_wss_cb_t wss_cb, fstr_t ws_protocol, void* cb_arg) {
     if (!wsr_req_is_ws_open(req))
         return wsr_response(HTTP_NO_CONTENT);
     wsr_rsp_t ws_rsp = {
