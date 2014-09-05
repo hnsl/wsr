@@ -506,9 +506,9 @@ static wss_cb_arg_t http_session(rio_t* client_h, wsr_cfg_t cfg) {
             }
         }
         // Pass request to callback and get response.
-        wsr_rsp_t rsp = cfg.req_cb(&req, cfg.cb_arg);
+        wsr_rsp_t* rsp = cfg.req_cb(&req, cfg.cb_arg);
         // Handle possible web socket upgrade.
-        if (rsp.wss_cb != 0) {
+        if (rsp->wss_cb != 0) {
             fstr_t* ws_version = dict_read(req.headers, fstr_t, "sec-websocket-version");
             if (ws_version == 0 || !fstr_equal(*ws_version, "13")) {
                 http_reply_simple_status(client_h, HTTP_UPGRADE_REQUIRED);
@@ -525,38 +525,38 @@ static wss_cb_arg_t http_session(rio_t* client_h, wsr_cfg_t cfg) {
                 "Upgrade: websocket\r\n"
                 "Connection: Upgrade\r\n"
                 "Sec-WebSocket-Accept: ", fss(fstr_base64_encode(flstr_to_fstr(ws_accept, 20))), "\r\n",
-                (rsp.ws_protocol.len != 0? concs("Sec-WebSocket-Protocol: ", rsp.ws_protocol, "\r\n"): ""),
+                (rsp->ws_protocol.len != 0? concs("Sec-WebSocket-Protocol: ", rsp->ws_protocol, "\r\n"): ""),
                 "\r\n"
             );
             rio_write(client_h, header);
-            return (wss_cb_arg_t) {.wss_cb = rsp.wss_cb, .cb_arg = rsp.cb_arg};
+            return (wss_cb_arg_t) {.wss_cb = rsp->wss_cb, .cb_arg = rsp->cb_arg};
         }
         // Compile and send raw head to client.
         sub_heap {
-            if (rsp.reason.len == 0)
-                rsp.reason = "-";
-            fstr_t status_line = concs("HTTP/1.1 ", ui2fs(rsp.status), " ", rsp.reason);
+            if (rsp->reason.len == 0)
+                rsp->reason = "-";
+            fstr_t status_line = concs("HTTP/1.1 ", ui2fs(rsp->status), " ", rsp->reason);
             list(fstr_t)* raw_headers = new_list(fstr_t, status_line);
-            if (rsp.headers != 0) {
-                dict_foreach(rsp.headers, fstr_t, key, value) {
+            if (rsp->headers != 0) {
+                dict_foreach(rsp->headers, fstr_t, key, value) {
                     list_push_end(raw_headers, fstr_t, concs(key, ": ", value));
                 }
             }
-            if (rsp.set_cookies != 0) {
-                list_foreach(rsp.set_cookies, wsr_set_cookie_t, set_cookie) {
+            if (rsp->set_cookies != 0) {
+                list_foreach(rsp->set_cookies, wsr_set_cookie_t, set_cookie) {
                     list_push_end(raw_headers, fstr_t, fss(serialize_set_cookie(set_cookie)));
                 }
             }
             bool has_body;
-            if (rsp.body_stream != 0) {
+            if (rsp->body_stream != 0) {
                 list_push_end(raw_headers, fstr_t, "transfer-encoding: chunked");
                 has_body = true;
-            } else if (rsp.html != 0) {
-                list_push_end(raw_headers, fstr_t, concs("content-length: ", ui2fs(wsr_tpl_length(rsp.html))));
+            } else if (rsp->html != 0) {
+                list_push_end(raw_headers, fstr_t, concs("content-length: ", ui2fs(wsr_tpl_length(rsp->html))));
                 has_body = true;
             } else {
-                list_push_end(raw_headers, fstr_t, concs("content-length: ", ui2fs(rsp.body_blob.len)));
-                has_body = (rsp.body_blob.len > 0);
+                list_push_end(raw_headers, fstr_t, concs("content-length: ", ui2fs(rsp->body_blob.len)));
+                has_body = (rsp->body_blob.len > 0);
             }
             list_push_end(raw_headers, fstr_t, "server: wsr/" WSR_VERSION);
             list_push_end(raw_headers, fstr_t, concs("date: ", fss(rio_clock_to_rfc1123(rio_get_time_clock()))));
@@ -568,14 +568,14 @@ static wss_cb_arg_t http_session(rio_t* client_h, wsr_cfg_t cfg) {
         // Send raw body.
         if (req.method == METHOD_HEAD) {
             // Don't send a body.
-        } else if (rsp.body_stream != 0) {
+        } else if (rsp->body_stream != 0) {
             // Send response body with chunked transfer encoding.
             fstr_t body_buf = fss(fstr_alloc_buffer(WSR_BODY_STREAM_BUF_SIZE));
             for (;;) sub_heap {
                 bool more_hint;
                 fstr_t chunk;
                 try {
-                    chunk = rio_read_part(rsp.body_stream, body_buf, &more_hint);
+                    chunk = rio_read_part(rsp->body_stream, body_buf, &more_hint);
                 } catch (exception_io, e) {
                     // Assuming end of response stream. We don't expose i/o errors to the web client yet.
                     goto end_of_chunked_body;
@@ -595,12 +595,12 @@ static wss_cb_arg_t http_session(rio_t* client_h, wsr_cfg_t cfg) {
                 // Write last-chunk without any trailing headers.
                 rio_write(client_h, "0\r\n\r\n");
             }
-        } else if (rsp.html != 0) {
+        } else if (rsp->html != 0) {
             // Send rendered html page.
-            wsr_tpl_writev(client_h, rsp.html);
-        } else if (rsp.body_blob.len > 0) {
+            wsr_tpl_writev(client_h, rsp->html);
+        } else if (rsp->body_blob.len > 0) {
             // Send response body as a pure binary blob.
-            rio_write(client_h, rsp.body_blob);
+            rio_write(client_h, rsp->body_blob);
         }
     }
 }
@@ -888,7 +888,7 @@ static fstr_mem_t* wsr_etag(rio_stat_t st) {
     return fstr_hexencode(bin_etag);
 }
 
-wsr_rsp_t wsr_response_file(wsr_req_t* req, fstr_t base_path) { sub_heap {
+wsr_rsp_t* wsr_response_file(wsr_req_t* req, fstr_t base_path) { sub_heap {
     if (req->path.len == 0 || req->path.str[0] != '/' || base_path.len == 0)
         return wsr_response(HTTP_NOT_FOUND);
     try {
@@ -918,19 +918,19 @@ wsr_rsp_t wsr_response_file(wsr_req_t* req, fstr_t base_path) { sub_heap {
             file_ext = "";
         fstr_t mime_type = wsr_mime_from_ext(file_ext);
         // Assemble normal response.
-        wsr_rsp_t rsp = wsr_response(HTTP_OK);
-        rsp.heap = lwt_alloc_heap();
-        switch_heap(rsp.heap) {
-            rsp.headers = new_dict(fstr_t);
+        wsr_rsp_t* rsp = wsr_response(HTTP_OK);
+        rsp->heap = lwt_alloc_heap();
+        switch_heap(rsp->heap) {
+            rsp->headers = new_dict(fstr_t);
             // Since we always reply with a chunked stream we explicitly hint the
             // final expected content size so client is aware of the download progress.
-            (void) dict_insert(rsp.headers, fstr_t, "content-length", ui2fs(st.size));
+            (void) dict_insert(rsp->headers, fstr_t, "content-length", ui2fs(st.size));
             fstr_t content_type = mime_type;
-            (void) dict_insert(rsp.headers, fstr_t, "content-type", content_type);
-            (void) dict_insert(rsp.headers, fstr_t, "etag", fss(import(etag)));
-            rsp.body_stream = import(file_h);
+            (void) dict_insert(rsp->headers, fstr_t, "content-type", content_type);
+            (void) dict_insert(rsp->headers, fstr_t, "etag", fss(import(etag)));
+            rsp->body_stream = import(file_h);
         }
-        escape_list(rsp.heap);
+        escape_list(rsp->heap);
         return rsp;
     } catch (exception_io, e) {
         // Assume not found. A better implementation could check
@@ -1003,3 +1003,64 @@ void wsr_start(wsr_cfg_t cfg) { sub_heap {
         }
     }
 }}
+
+wsr_rsp_t* wsr_response(wsr_status_t status) {
+    lwt_heap_t* heap = lwt_alloc_heap();
+    switch_heap (heap) {
+        wsr_rsp_t* rsp = new(wsr_rsp_t);
+        rsp->heap = heap;
+        rsp->status = status;
+        rsp->reason = wsr_reason(status);
+        return rsp;
+    }
+}
+
+wsr_rsp_t* wsr_response_static(wsr_status_t status, fstr_t body, fstr_t mime_type) {
+    wsr_rsp_t* rsp = wsr_response(status);
+    switch_heap(rsp->heap) {
+        rsp->headers = new_dict(fstr_t);
+        (void) dict_insert(rsp->headers, fstr_t, fstr("content-type"), mime_type);
+        rsp->body_blob = body;
+        return rsp;
+    }
+}
+
+wsr_rsp_t* wsr_response_dynamic(wsr_status_t status, fstr_mem_t* body, fstr_t mime_type) {
+    wsr_rsp_t* rsp = wsr_response(status);
+    switch_heap(rsp->heap) {
+        rsp->headers = new_dict(fstr_t);
+        (void) dict_insert(rsp->headers, fstr_t, fstr("content-type"), mime_type);
+        rsp->body_blob = fss(import(body));
+        return rsp;
+    }
+}
+
+wsr_rsp_t* wsr_response_html(wsr_status_t status, struct html* html) {
+    wsr_rsp_t* rsp = wsr_response(status);
+    switch_heap(rsp->heap) {
+        rsp->headers = new_dict(fstr_t);
+        extern const fstr_t wsr_mime_html;
+        (void) dict_insert(rsp->headers, fstr_t, fstr("content-type"), wsr_mime_html);
+        rsp->html = html;
+        return rsp;
+    }
+}
+
+wsr_rsp_t* wsr_response_redirect(fstr_t path) {
+    wsr_rsp_t* rsp = wsr_response(HTTP_FOUND);
+    switch_heap(rsp->heap) {
+        rsp->headers = new_dict(fstr_t);
+        (void) dict_insert(rsp->headers, fstr_t, fstr("location"), path);
+        return rsp;
+    }
+}
+
+wsr_rsp_t* wsr_response_web_socket(wsr_req_t* req, wsr_wss_cb_t wss_cb, fstr_t ws_protocol, void* cb_arg) {
+    if (!wsr_req_is_ws_open(req))
+        return wsr_response(HTTP_NO_CONTENT);
+    wsr_rsp_t* rsp = wsr_response(HTTP_SWITCH_PROTO);
+    rsp->wss_cb = wss_cb;
+    rsp->ws_protocol = ws_protocol;
+    rsp->cb_arg = cb_arg;
+    return rsp;
+}

@@ -86,7 +86,7 @@ typedef struct wsr_rsp {
 } wsr_rsp_t;
 
 /// Callback for http requests.
-typedef wsr_rsp_t (*wsr_req_cb_t)(wsr_req_t* req, void* cb_arg);
+typedef wsr_rsp_t* (*wsr_req_cb_t)(wsr_req_t* req, void* cb_arg);
 
 /// Callback for POST requests.
 typedef size_t (*wsr_post_limit_cb_t)(wsr_req_t* req, void* cb_arg);
@@ -196,7 +196,7 @@ bool wsr_req_is_ws_open(wsr_req_t* req);
 
 /// Safely respond with a file read from the file system with proper caching.
 /// Note that the base path must be a real path.
-wsr_rsp_t wsr_response_file(wsr_req_t* req, fstr_t base_path);
+wsr_rsp_t* wsr_response_file(wsr_req_t* req, fstr_t base_path);
 
 /// Write a web socket message. Throws io exception.
 void wsr_web_socket_write(fstr_t data, bool binary, fid(wssw) writer_fid);
@@ -234,72 +234,21 @@ void wsr_response_add_cookie(wsr_rsp_t* rsp, wsr_set_cookie_t set_cookie);
 void wsr_start(wsr_cfg_t cfg);
 
 /// Returns a simple response without a body.
-static inline wsr_rsp_t wsr_response(wsr_status_t status) {
-    wsr_rsp_t rsp = {
-        .status = status,
-        .reason = wsr_reason(status),
-    };
-    return rsp;
-}
+wsr_rsp_t* wsr_response(wsr_status_t status);
 
 /// Returns a simple response with specified static body.
 /// Tip: You can set "mime_type" to wsr_mime_html if you are responding with html.
-static inline wsr_rsp_t wsr_response_static(wsr_status_t status, fstr_t body, fstr_t mime_type) {
-    wsr_rsp_t rsp = wsr_response(status);
-    rsp.heap = lwt_alloc_heap();
-    switch_heap(rsp.heap) {
-        rsp.headers = new_dict(fstr_t);
-        (void) dict_insert(rsp.headers, fstr_t, fstr("content-type"), mime_type);
-    }
-    rsp.body_blob = body;
-    return rsp;
-}
+wsr_rsp_t* wsr_response_static(wsr_status_t status, fstr_t body, fstr_t mime_type);
 
 /// Returns a simple response with specified dynamic body.
-static inline wsr_rsp_t wsr_response_dynamic(wsr_status_t status, fstr_mem_t* body, fstr_t mime_type) {
-    wsr_rsp_t rsp = wsr_response(status);
-    rsp.heap = lwt_alloc_heap();
-    switch_heap(rsp.heap) {
-        rsp.headers = new_dict(fstr_t);
-        (void) dict_insert(rsp.headers, fstr_t, fstr("content-type"), mime_type);
-        rsp.body_blob = fss(import(body));
-    }
-    return rsp;
-}
+wsr_rsp_t* wsr_response_dynamic(wsr_status_t status, fstr_mem_t* body, fstr_t mime_type);
 
-static inline wsr_rsp_t wsr_response_html(wsr_status_t status, struct html* html) {
-    wsr_rsp_t rsp = wsr_response(status);
-    rsp.heap = lwt_alloc_heap();
-    switch_heap(rsp.heap) {
-        rsp.headers = new_dict(fstr_t);
-        extern const fstr_t wsr_mime_html;
-        (void) dict_insert(rsp.headers, fstr_t, fstr("content-type"), wsr_mime_html);
-        rsp.html = html;
-    }
-    return rsp;
-}
+wsr_rsp_t* wsr_response_html(wsr_status_t status, struct html* html);
 
-static inline wsr_rsp_t wsr_response_redirect(fstr_t path) {
-    wsr_rsp_t rsp = wsr_response(HTTP_FOUND);
-    rsp.heap = lwt_alloc_heap();
-    switch_heap(rsp.heap) {
-        rsp.headers = new_dict(fstr_t);
-        (void) dict_insert(rsp.headers, fstr_t, fstr("location"), path);
-    }
-    return rsp;
-}
+wsr_rsp_t* wsr_response_redirect(fstr_t path);
 
 /// Returns a virtual response indicating that connection should be upgraded to web socket.
-static inline wsr_rsp_t wsr_response_web_socket(wsr_req_t* req, wsr_wss_cb_t wss_cb, fstr_t ws_protocol, void* cb_arg) {
-    if (!wsr_req_is_ws_open(req))
-        return wsr_response(HTTP_NO_CONTENT);
-    wsr_rsp_t ws_rsp = {
-        .wss_cb = wss_cb,
-        .ws_protocol = ws_protocol,
-        .cb_arg = cb_arg,
-    };
-    return ws_rsp;
-}
+wsr_rsp_t* wsr_response_web_socket(wsr_req_t* req, wsr_wss_cb_t wss_cb, fstr_t ws_protocol, void* cb_arg);
 
 /// Creates a simple cookie. To delete a cookie, set the value to an empty string.
 static inline wsr_set_cookie_t wsr_simple_cookie(fstr_t key, fstr_t value, uint128_t expires) {
