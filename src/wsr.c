@@ -28,7 +28,7 @@
 /// times this value.
 #define WSR_READ_PEEK_BUF_SIZE (0x800)
 
-/// The default limit of POST request sizes, returned by default_pre_post_cb.
+/// The default limit of POST request sizes, returned by default_post_limit_cb.
 #define WSR_DEFAULT_ACCEPTED_POST_SIZE (0x2000000)
 
 #pragma librcd
@@ -128,7 +128,7 @@ fstr_t wsr_reason(wsr_status_t status) {
     }
 }
 
-static size_t default_pre_post_cb(wsr_req_t* req, void* cb_arg) {
+static size_t default_post_limit_cb(wsr_req_t* req, void* cb_arg) {
     return WSR_DEFAULT_ACCEPTED_POST_SIZE;
 }
 
@@ -136,7 +136,7 @@ wsr_cfg_t wsr_default_cfg() {
     wsr_cfg_t cfg = {
         .bind.port = 80,
         .tcp_backlog = 1024,
-        .pre_post_cb = default_pre_post_cb,
+        .post_limit_cb = default_post_limit_cb,
     };
     return cfg;
 }
@@ -478,7 +478,7 @@ static wss_cb_arg_t http_session(rio_t* client_h, wsr_cfg_t cfg) {
                 http_reply_simple_status(client_h, HTTP_LENGTH_REQUIRED);
                 throw("missing content-length of POST request", exception_io);
             }
-            size_t max_content_length = cfg.pre_post_cb(&req, cfg.cb_arg);
+            size_t max_content_length = cfg.post_limit_cb(&req, cfg.cb_arg);
             if (max_content_length == 0) {
                 http_reply_simple_status(client_h, HTTP_METHOD_NOT_ALLOWED);
                 throw("POST requests not supported", exception_io);
