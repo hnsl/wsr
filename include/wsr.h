@@ -263,4 +263,5 @@ static inline wsr_set_cookie_t wsr_simple_cookie(fstr_t key, fstr_t value, uint1
     };
     return cookie;
 }
+
 #endif	/* WSR_H */
