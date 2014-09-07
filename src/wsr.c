@@ -888,7 +888,7 @@ static fstr_mem_t* wsr_etag(rio_stat_t st) {
     return fstr_hexencode(bin_etag);
 }
 
-wsr_rsp_t* wsr_response_file(wsr_req_t* req, fstr_t base_path) { sub_heap {
+wsr_rsp_t* wsr_response_file(wsr_req_t* req, fstr_t base_path) {
     if (req->path.len == 0 || req->path.str[0] != '/' || base_path.len == 0)
         return wsr_response(HTTP_NOT_FOUND);
     try {
@@ -904,7 +904,7 @@ wsr_rsp_t* wsr_response_file(wsr_req_t* req, fstr_t base_path) { sub_heap {
             return wsr_response(HTTP_NOT_FOUND);
         // Verify that the absolute path of the file we opened really is path inside base_path.
         fstr_t abs_path = fss(rio_file_get_path(file_h));
-        if (!fstr_prefixes(abs_path, concs(fss(rio_file_real_path(base_path)), "/")))
+        if (!fstr_prefixes(abs_path, sconc(fss(rio_file_real_path(base_path)), "/")))
             return wsr_response(HTTP_NOT_FOUND);
         // We only use etag for caching. This is a minimal implementation and
         // sufficient for acceptable caching behavior in modern browsers.
@@ -937,11 +937,11 @@ wsr_rsp_t* wsr_response_file(wsr_req_t* req, fstr_t base_path) { sub_heap {
         // e->errno_snapshot and return a more truthful error message.
         return wsr_response(HTTP_NOT_FOUND);
     }
-}}
+}
 
 // Removes the special case that cookie-value can be wrapped in DQUOTEs.
 // cookie-value      = *cookie-octet / ( DQUOTE *cookie-octet DQUOTE )
-static fstr_t sanitize_cookie_value(fstr_t raw_cookie_value){
+static fstr_t sanitize_cookie_value(fstr_t raw_cookie_value) {
     bool dquoted = false;
     if (fstr_equal(fstr_slice(raw_cookie_value, 0, 1), "\"")) {
         if (!fstr_equal(fstr_sslice(raw_cookie_value, -2, -1), "\""))

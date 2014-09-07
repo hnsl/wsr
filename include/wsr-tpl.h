@@ -47,6 +47,6 @@ size_t wsr_tpl_length(html_t* html);
 /// afterwards.
 void wsr_tpl_writev(rio_t* write_h, html_t* html);
 
-wsr_tpl_ctx_t* wsr_tpl_init(fstr_t root_tpl_path, bool precompile, bool strict);
+wsr_tpl_ctx_t* wsr_tpl_init(fstr_t root_tpl_path, bool precompile);
 
 #endif	/* WSR_TPL_H */
