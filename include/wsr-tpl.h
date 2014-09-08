@@ -5,6 +5,8 @@
 #ifndef WSR_TPL_H
 #define	WSR_TPL_H
 
+#include "json.h"
+
 #define HRAW(raw_html) wsr_html_raw(raw_html)
 
 #define HC(...) ({ \
@@ -35,6 +37,8 @@ html_t* wsr_html_conc(size_t n_html, html_t* htmls);
 html_t* wsr_html_implode(list(html_t*)* htmls);
 
 html_t* wsr_html_escape(fstr_t str);
+
+void wsr_tpl_render_jd(wsr_tpl_ctx_t* ctx, fstr_t tpl_path, dict(html_t*)* partials, json_value_t jdata, html_t* buf);
 
 void wsr_tpl_render(wsr_tpl_ctx_t* ctx, fstr_t tpl_path, dict(html_t*)* partials, html_t* buf);
 

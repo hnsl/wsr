@@ -17,6 +17,8 @@ typedef enum wsr_elem_type {
     WSR_ELEM_INCLUDE,
     WSR_ELEM_PARTIAL,
     WSR_ELEM_INLINE,
+    WSR_ELEM_PRINT,
+    WSR_ELEM_FOREACH,
 } wsr_elem_type_t;
 
 typedef struct wsr_elem {
@@ -24,6 +26,9 @@ typedef struct wsr_elem {
     fstr_t html;
     struct wsr_tpl* tpl;
     fstr_t partial_key;
+    fstr_t jkey_get;
+    fstr_t jkey_setk;
+    fstr_t jkey_setv;
 } wsr_elem_t;
 
 typedef struct wsr_tpl {
@@ -159,6 +164,9 @@ typedef struct tpl_part {
     fstr_t html;
     fstr_t tpl_path;
     fstr_t partial_key;
+    fstr_t jkey_get;
+    fstr_t jkey_setk;
+    fstr_t jkey_setv;
     struct virt_tpl* virt_tpl;
 } tpl_part_t;
 
@@ -172,6 +180,7 @@ static void inner_compile_tpl(wsr_tpl_ctx_t* ctx, dict(wsr_tpl_t*)* partials, fs
     typedef enum {
         STACKED_WRAP,
         STACKED_INLINE,
+        STACKED_FOREACH,
     } stack_class_t;
     typedef struct {
         stack_class_t class;
@@ -183,6 +192,12 @@ static void inner_compile_tpl(wsr_tpl_ctx_t* ctx, dict(wsr_tpl_t*)* partials, fs
                 fstr_t partial_key;
                 list(tpl_part_t)* prev_parts;
             } inl;
+            struct {
+                fstr_t jkey_get;
+                fstr_t jkey_setk;
+                fstr_t jkey_setv;
+                list(tpl_part_t)* prev_parts;
+            } fore;
         };
     } stack_elem_t;
     DBGFN("compiling: [", tpl_id ,"]");
@@ -205,11 +220,18 @@ static void inner_compile_tpl(wsr_tpl_ctx_t* ctx, dict(wsr_tpl_t*)* partials, fs
         fstr_t tpl_tag;
         if (!fstr_iterate_trim(&tpl, "}>", &tpl_tag))
             break;
-        // Dynamic element reference.
+        // Dynamic partial reference.
         if (fstr_prefixes(tpl_tag, "$")) {
             tpl_part_t part = {
                 .type = WSR_ELEM_PARTIAL,
                 .partial_key = fstr_trim(fstr_slice(tpl_tag, 1, -1)),
+            };
+            list_push_end(parts, tpl_part_t, part);
+        // Dynamic jdata reference.
+        } else if (fstr_prefixes(tpl_tag, "@")) {
+            tpl_part_t part = {
+                .type = WSR_ELEM_PRINT,
+                .jkey_get = fstr_trim(fstr_slice(tpl_tag, 1, -1)),
             };
             list_push_end(parts, tpl_part_t, part);
         // Include file as element.
@@ -266,13 +288,13 @@ static void inner_compile_tpl(wsr_tpl_ctx_t* ctx, dict(wsr_tpl_t*)* partials, fs
         // Finish the inline partial.
         } else if (fstr_equal(tpl_tag, "!inline")) {
             if (list_count(wrapper_stack, stack_elem_t) < 1)
-                throw_eio(concs("template [,", tpl_id, "] contains invalid <{!inline}>"), wsr_tpl_invalid);
+                throw_invalid_tag(tpl_id, tpl_tag);
             stack_elem_t se = list_pop_end(wrapper_stack, stack_elem_t);
             if (se.class != STACKED_INLINE)
                 throw_invalid_tag(tpl_id, tpl_tag);
             // Add the inline partial as a virtual template.
             virt_tpl_t* v_tpl = new(virt_tpl_t);
-            v_tpl->id = concs("inline:[", se.inl.partial_key, "]@", tpl_file_name);
+            v_tpl->id = "";
             v_tpl->parts = parts;
             v_tpl->real_tpl = 0;
             // Prepend the virtual template so it gets it's real_tpl reference populated before the main template.
@@ -283,6 +305,53 @@ static void inner_compile_tpl(wsr_tpl_ctx_t* ctx, dict(wsr_tpl_t*)* partials, fs
             tpl_part_t part = {
                 .type = WSR_ELEM_INLINE,
                 .partial_key = se.inl.partial_key,
+                .virt_tpl = v_tpl,
+            };
+            list_push_end(parts, tpl_part_t, part);
+        // Begin a foreach.
+        } else if (fstr_prefixes(tpl_tag, "foreach:@")) {
+            fstr_t foreach_args;
+            fstr_divide(tpl_tag, "foreach:@", 0, &foreach_args);
+            fstr_t jkey_get, jkey_set_args;
+            if (!fstr_divide(foreach_args, ":@", &jkey_get, &jkey_set_args))
+                throw_eio(concs("invalid tpl tag foreach syntax [", tpl_tag, "]"), wsr_tpl_invalid);
+            fstr_t jkey_setk, jkey_setv;
+            if (!fstr_divide(jkey_set_args, ":@", &jkey_setk, &jkey_setv)) {
+                jkey_setk = "";
+                jkey_setv = jkey_set_args;
+            }
+            // Stack new parts context.
+            stack_elem_t se = {
+                .class = STACKED_FOREACH,
+                .fore.jkey_get = jkey_get,
+                .fore.jkey_setk = jkey_setk,
+                .fore.jkey_setv = jkey_setv,
+                .fore.prev_parts = parts,
+            };
+            list_push_end(wrapper_stack, stack_elem_t, se);
+            parts = new_list(tpl_part_t);
+        // End the foreach.
+        } else if (fstr_equal(tpl_tag, "!foreach")) {
+            if (list_count(wrapper_stack, stack_elem_t) < 1)
+                throw_invalid_tag(tpl_id, tpl_tag);
+            stack_elem_t se = list_pop_end(wrapper_stack, stack_elem_t);
+            if (se.class != STACKED_FOREACH)
+                throw_invalid_tag(tpl_id, tpl_tag);
+            // Add the foreach partial as a virtual template.
+            virt_tpl_t* v_tpl = new(virt_tpl_t);
+            v_tpl->id = "";
+            v_tpl->parts = parts;
+            v_tpl->real_tpl = 0;
+            // Prepend the virtual template so it gets it's real_tpl reference populated before the main template.
+            list_push_start(v_templates, virt_tpl_t*, v_tpl);
+            // Pop the parts context.
+            parts = se.fore.prev_parts;
+            // Add the foreach template part that refers to the corresponding v template.
+            tpl_part_t part = {
+                .type = WSR_ELEM_FOREACH,
+                .jkey_get = se.fore.jkey_get,
+                .jkey_setk = se.fore.jkey_setk,
+                .jkey_setv = se.fore.jkey_setv,
                 .virt_tpl = v_tpl,
             };
             list_push_end(parts, tpl_part_t, part);
@@ -339,6 +408,26 @@ static void inner_compile_tpl(wsr_tpl_ctx_t* ctx, dict(wsr_tpl_t*)* partials, fs
                     .partial_key = part.partial_key,
                 };
                 list_push_end(elems, wsr_elem_t, elem);
+                break;
+            } case WSR_ELEM_PRINT: {
+                wsr_elem_t elem = {
+                    .type = part.type,
+                    .jkey_get = part.jkey_get,
+                };
+                list_push_end(elems, wsr_elem_t, elem);
+                break;
+            } case WSR_ELEM_FOREACH: {
+                wsr_tpl_t* r_tpl = part.virt_tpl->real_tpl;
+                assert(r_tpl != 0);
+                wsr_elem_t elem = {
+                    .type = WSR_ELEM_FOREACH,
+                    .tpl = r_tpl,
+                    .jkey_get = part.jkey_get,
+                    .jkey_setk = part.jkey_setk,
+                    .jkey_setv = part.jkey_setv,
+                };
+                list_push_end(elems, wsr_elem_t, elem);
+                break;
             }}
         }
         switch_heap (heap) {
@@ -352,8 +441,10 @@ static void inner_compile_tpl(wsr_tpl_ctx_t* ctx, dict(wsr_tpl_t*)* partials, fs
                 i++;
             }
             // Insert all tags this file declares.
-            DBGFN("inserting tpl [", v_tpl->id,"]");
-            (void) dict_insert(partials, wsr_tpl_t*, v_tpl->id, r_tpl);
+            if (v_tpl->id.len > 0) {
+                DBGFN("inserting tpl [", v_tpl->id,"]");
+                (void) dict_insert(partials, wsr_tpl_t*, v_tpl->id, r_tpl);
+            }
             // Index real template for this virtual template.
             v_tpl->real_tpl = r_tpl;
         }
@@ -376,13 +467,16 @@ static wsr_tpl_t* get_tpl_from_file(wsr_tpl_ctx_t* ctx, dict(wsr_tpl_t*)* partia
     return get_compiled_tpl(partials, tpl_path);
 }
 
+static void tpl_append_html(html_t* html, html_t* buf) {
+    for (size_t i = 0; i < html->n_total; i++)
+        html_append_iov(html->iov[i], buf);
+}
+
 static void tpl_append_partial(wsr_tpl_ctx_t* ctx, fstr_t partial_key, dict(html_t*)* partial_index, html_t* buf) {
     html_t** partial_ptr = dict_read(partial_index, html_t*, partial_key);
     if (partial_ptr == 0)
         return;
-    html_t* partial = *partial_ptr;
-    for (size_t i = 0; i < partial->n_total; i++)
-        html_append_iov(partial->iov[i], buf);
+    tpl_append_html(*partial_ptr, buf);
 }
 
 static html_t* new_inline_buf(dict(html_t*)* inlines, fstr_t partial_key) {
@@ -396,7 +490,32 @@ static html_t* new_inline_buf(dict(html_t*)* inlines, fstr_t partial_key) {
     }
 }
 
-static void tpl_execute(wsr_tpl_ctx_t* ctx, wsr_tpl_t* tpl, dict(html_t*)* partials, dict(html_t*)* inlines, html_t* buf, fstr_t tpl_path) {
+static json_value_t jdata_get(json_value_t jdata, fstr_t jkey) {
+    if (jkey.len == 0)
+        return json_null_v;
+    for (fstr_t jkey_part; fstr_iterate_trim(&jkey, ".", &jkey_part);) {
+        jdata = JSON_LREF(jdata, jkey_part);
+        if (jdata.type == JSON_NULL)
+            return json_null_v;
+    }
+    return jdata;
+}
+
+static void jdata_put(json_value_t jdata, fstr_t jkey, json_value_t val) {
+    if (jkey.len == 0)
+        return;
+    fstr_t g_jkey, s_key;
+    if (fstr_rdivide(jkey, ".", &g_jkey, &s_key)) {
+        jdata = jdata_get(jdata, g_jkey);
+    } else {
+        s_key = jkey;
+    }
+    if (jdata.type != JSON_OBJECT)
+        return;
+    JSON_SET(jdata, s_key, val);
+}
+
+static void tpl_execute(wsr_tpl_ctx_t* ctx, wsr_tpl_t* tpl, dict(html_t*)* partials, dict(html_t*)* inlines, json_value_t jdata, html_t* buf, fstr_t tpl_path) {
     for (size_t i = 0; i < tpl->n_elems; i++) {
         wsr_elem_t elem = tpl->elems[i];
         switch (elem.type) {{
@@ -404,7 +523,7 @@ static void tpl_execute(wsr_tpl_ctx_t* ctx, wsr_tpl_t* tpl, dict(html_t*)* parti
             html_append(elem.html, buf);
             break;
         } case WSR_ELEM_INCLUDE: {
-            tpl_execute(ctx, elem.tpl, partials, inlines, buf, tpl_path);
+            tpl_execute(ctx, elem.tpl, partials, inlines, jdata, buf, tpl_path);
             break;
         } case WSR_ELEM_PARTIAL: {
             tpl_append_partial(ctx, elem.partial_key, partials, buf);
@@ -412,16 +531,46 @@ static void tpl_execute(wsr_tpl_ctx_t* ctx, wsr_tpl_t* tpl, dict(html_t*)* parti
             break;
         } case WSR_ELEM_INLINE: {
             html_t* inline_buf = new_inline_buf(inlines, elem.partial_key);
-            tpl_execute(ctx, elem.tpl, partials, inlines, inline_buf, tpl_path);
+            tpl_execute(ctx, elem.tpl, partials, inlines, jdata, inline_buf, tpl_path);
+            break;
+        } case WSR_ELEM_PRINT: {
+            DBGFN("get ", jdata, " => ", elem.jkey_get);
+            json_value_t value = jdata_get(jdata, elem.jkey_get);
+            if (value.type == JSON_STRING) {
+                tpl_append_html(wsr_html_escape(value.string_value), buf);
+            } else if (value.type == JSON_NUMBER) {
+                html_append(fss(fstr_from_double(value.number_value)), buf);
+            } else if (value.type != JSON_NULL) {
+                html_append(json_serial_type(value.type), buf);
+            }
+            break;
+        } case WSR_ELEM_FOREACH: {
+            json_value_t value = jdata_get(jdata, elem.jkey_get);
+            if (value.type == JSON_ARRAY) {
+                list_foreach(value.array_value, json_value_t, value) {
+                    jdata_put(jdata, elem.jkey_setv, value);
+                    tpl_execute(ctx, elem.tpl, partials, inlines, jdata, buf, tpl_path);
+                }
+            } else if (value.type == JSON_OBJECT) {
+                dict_foreach(value.object_value, json_value_t, key, value) {
+                    jdata_put(jdata, elem.jkey_setk, json_string_v(key));
+                    jdata_put(jdata, elem.jkey_setv, value);
+                    tpl_execute(ctx, elem.tpl, partials, inlines, jdata, buf, tpl_path);
+                }
+            }
             break;
         }}
     }
 }
 
-void wsr_tpl_render(wsr_tpl_ctx_t* ctx, fstr_t tpl_path, dict(html_t*)* partials, html_t* buf) {
+void wsr_tpl_render_jd(wsr_tpl_ctx_t* ctx, fstr_t tpl_path, dict(html_t*)* partials, json_value_t jdata, html_t* buf) {
     wsr_tpl_t* template = ctx->precompile? get_compiled_tpl(ctx->precompiled_partials, tpl_path): get_tpl_from_file(ctx, 0, tpl_path);
     dict(html_t*)* inlines = new_dict(html_t*);
-    tpl_execute(ctx, template, partials, inlines, buf, tpl_path);
+    tpl_execute(ctx, template, partials, inlines, jdata, buf, tpl_path);
+}
+
+void wsr_tpl_render(wsr_tpl_ctx_t* ctx, fstr_t tpl_path, dict(html_t*)* partials, html_t* buf) {
+    wsr_tpl_render_jd(ctx, tpl_path, partials, json_null_v, buf);
 }
 
 html_t* wsr_tpl_start() {
