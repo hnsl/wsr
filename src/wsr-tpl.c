@@ -297,8 +297,7 @@ static void inner_compile_tpl(wsr_tpl_ctx_t* ctx, dict(wsr_tpl_t*)* partials, fs
             v_tpl->id = "";
             v_tpl->parts = parts;
             v_tpl->real_tpl = 0;
-            // Prepend the virtual template so it gets it's real_tpl reference populated before the main template.
-            list_push_start(v_templates, virt_tpl_t*, v_tpl);
+            list_push_end(v_templates, virt_tpl_t*, v_tpl);
             // Pop the parts context.
             parts = se.inl.prev_parts;
             // Add the inline template part that refers to the corresponding v template.
@@ -342,8 +341,7 @@ static void inner_compile_tpl(wsr_tpl_ctx_t* ctx, dict(wsr_tpl_t*)* partials, fs
             v_tpl->id = "";
             v_tpl->parts = parts;
             v_tpl->real_tpl = 0;
-            // Prepend the virtual template so it gets it's real_tpl reference populated before the main template.
-            list_push_start(v_templates, virt_tpl_t*, v_tpl);
+            list_push_end(v_templates, virt_tpl_t*, v_tpl);
             // Pop the parts context.
             parts = se.fore.prev_parts;
             // Add the foreach template part that refers to the corresponding v template.
