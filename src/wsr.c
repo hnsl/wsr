@@ -451,9 +451,9 @@ static wss_cb_arg_t http_session(rio_t* client_h, wsr_cfg_t cfg) {
             req.post_params = new_dict(fstr_t);
             req.post_file_data = 0;
             fstr_t* maybe_content_type = dict_read(req.headers, fstr_t, "content-type");
-            fstr_t content_type = (maybe_content_type != 0? *maybe_content_type: "");
+            req.content_type = (maybe_content_type != 0? *maybe_content_type: "");
             fstr_t multipart_boundary = "", content_type_params;
-            if (fstr_divide(content_type, ";", &content_type, &content_type_params)) {
+            if (fstr_divide(req.content_type, ";", &req.content_type, &content_type_params)) {
                 for (fstr_t part; fstr_iterate_trim(&content_type_params, ";", &part);) {
                     fstr_t key, value;
                     if (!fstr_divide(part, "=", &key, &value))
@@ -491,9 +491,9 @@ static wss_cb_arg_t http_session(rio_t* client_h, wsr_cfg_t cfg) {
                 req.post_body = fss(fstr_alloc(content_length));
                 rio_read_fill(client_h, req.post_body);
             }
-            if (fstr_equal_case(content_type, "application/x-www-form-urlencoded")) {
+            if (fstr_equal_case(req.content_type, "application/x-www-form-urlencoded")) {
                 decode_many_x_www_form_urlencoded(req.post_body, req.post_params);
-            } else if (fstr_equal_case(content_type, "multipart/form-data")) {
+            } else if (fstr_equal_case(req.content_type, "multipart/form-data")) {
                 if (multipart_boundary.len == 0)
                     request_header_error(client_h);
                 req.post_file_data = new_dict(wsr_post_file_data_t);
