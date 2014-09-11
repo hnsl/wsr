@@ -18,6 +18,7 @@ typedef enum wsr_elem_type {
     WSR_ELEM_PARTIAL,
     WSR_ELEM_INLINE,
     WSR_ELEM_PRINT,
+    WSR_ELEM_IF,
     WSR_ELEM_FOREACH,
 } wsr_elem_type_t;
 
@@ -25,6 +26,7 @@ typedef struct wsr_elem {
     wsr_elem_type_t type;
     fstr_t html;
     struct wsr_tpl* tpl;
+    struct wsr_tpl* tpl_else;
     fstr_t partial_key;
     fstr_t jkey_get;
     fstr_t jkey_setk;
@@ -168,6 +170,7 @@ typedef struct tpl_part {
     fstr_t jkey_setk;
     fstr_t jkey_setv;
     struct virt_tpl* virt_tpl;
+    struct virt_tpl* virt_tpl2;
 } tpl_part_t;
 
 typedef struct virt_tpl {
@@ -180,6 +183,7 @@ static void inner_compile_tpl(wsr_tpl_ctx_t* ctx, dict(wsr_tpl_t*)* partials, fs
     typedef enum {
         STACKED_WRAP,
         STACKED_INLINE,
+        STACKED_IF,
         STACKED_FOREACH,
     } stack_class_t;
     typedef struct {
@@ -198,6 +202,12 @@ static void inner_compile_tpl(wsr_tpl_ctx_t* ctx, dict(wsr_tpl_t*)* partials, fs
                 fstr_t jkey_setv;
                 list(tpl_part_t)* prev_parts;
             } fore;
+            struct {
+                fstr_t partial_key;
+                fstr_t jkey_get;
+                list(tpl_part_t)* prev_parts;
+                struct virt_tpl* pre_else_vt;
+            } ife;
         };
     } stack_elem_t;
     DBGFN("compiling: [", tpl_id ,"]");
@@ -307,6 +317,57 @@ static void inner_compile_tpl(wsr_tpl_ctx_t* ctx, dict(wsr_tpl_t*)* partials, fs
                 .virt_tpl = v_tpl,
             };
             list_push_end(parts, tpl_part_t, part);
+        // Begin an if.
+        } else if (fstr_prefixes(tpl_tag, "if:")) {
+            fstr_t if_args;
+            fstr_divide(tpl_tag, "if:", 0, &if_args);
+            stack_elem_t se = {.class = STACKED_IF, .ife.pre_else_vt = 0};
+            fstr_t ns_hint = fstr_slice(if_args, 0, 1);
+            if (fstr_equal(ns_hint, "$")) {
+                se.ife.partial_key = fstr_slice(if_args, 1, -1);
+            } else if (fstr_equal(ns_hint, "@")) {
+                se.ife.jkey_get = fstr_slice(if_args, 1, -1);
+            } else {
+                throw_eio(concs("missing ns hint in if expr [", tpl_tag, "]"), wsr_tpl_invalid);
+            }
+            // Stack new if context.
+            se.ife.prev_parts = parts;
+            list_push_end(wrapper_stack, stack_elem_t, se);
+            parts = new_list(tpl_part_t);
+        // Begin an else or end if.
+        } else if (fstr_equal(tpl_tag, "else") || fstr_prefixes(tpl_tag, "!if")) {
+            if (list_count(wrapper_stack, stack_elem_t) < 1)
+                throw_invalid_tag(tpl_id, tpl_tag);
+            stack_elem_t se = list_pop_end(wrapper_stack, stack_elem_t);
+            if (se.class != STACKED_IF)
+                throw_invalid_tag(tpl_id, tpl_tag);
+            bool is_else = fstr_equal(tpl_tag, "else");
+            if (is_else && se.ife.pre_else_vt != 0)
+                throw_eio(concs("duplicate else"), wsr_tpl_invalid);
+            // Add the if branch as a virtual template.
+            virt_tpl_t* v_tpl = new(virt_tpl_t);
+            v_tpl->id = "";
+            v_tpl->parts = parts;
+            v_tpl->real_tpl = 0;
+            list_push_end(v_templates, virt_tpl_t*, v_tpl);
+            if (is_else) {
+                // Stack new if context.
+                se.ife.pre_else_vt = v_tpl;
+                list_push_end(wrapper_stack, stack_elem_t, se);
+                parts = new_list(tpl_part_t);
+            } else {
+                // Pop the parts context.
+                parts = se.ife.prev_parts;
+                // Add the if template part that refers to the corresponding v template.
+                tpl_part_t part = {
+                    .type = WSR_ELEM_IF,
+                    .partial_key = se.ife.partial_key,
+                    .jkey_get = se.ife.jkey_get,
+                    .virt_tpl = (se.ife.pre_else_vt != 0? se.ife.pre_else_vt: v_tpl),
+                    .virt_tpl2 = (se.ife.pre_else_vt != 0? v_tpl: 0),
+                };
+                list_push_end(parts, tpl_part_t, part);
+            }
         // Begin a foreach.
         } else if (fstr_prefixes(tpl_tag, "foreach:@")) {
             fstr_t foreach_args;
@@ -414,6 +475,25 @@ static void inner_compile_tpl(wsr_tpl_ctx_t* ctx, dict(wsr_tpl_t*)* partials, fs
                 };
                 list_push_end(elems, wsr_elem_t, elem);
                 break;
+            } case WSR_ELEM_IF: {
+                wsr_tpl_t* r_tpl = part.virt_tpl->real_tpl;
+                assert(r_tpl != 0);
+                wsr_tpl_t* r_tpl_else;
+                if (part.virt_tpl2 != 0) {
+                    r_tpl_else = part.virt_tpl2->real_tpl;
+                    assert(r_tpl_else != 0);
+                } else {
+                    r_tpl_else = 0;
+                }
+                wsr_elem_t elem = {
+                    .type = WSR_ELEM_IF,
+                    .tpl = r_tpl,
+                    .tpl_else = r_tpl_else,
+                    .partial_key = part.partial_key,
+                    .jkey_get = part.jkey_get,
+                };
+                list_push_end(elems, wsr_elem_t, elem);
+                break;
             } case WSR_ELEM_FOREACH: {
                 wsr_tpl_t* r_tpl = part.virt_tpl->real_tpl;
                 assert(r_tpl != 0);
@@ -440,7 +520,6 @@ static void inner_compile_tpl(wsr_tpl_ctx_t* ctx, dict(wsr_tpl_t*)* partials, fs
             }
             // Insert all tags this file declares.
             if (v_tpl->id.len > 0) {
-                DBGFN("inserting tpl [", v_tpl->id,"]");
                 (void) dict_insert(partials, wsr_tpl_t*, v_tpl->id, r_tpl);
             }
             // Index real template for this virtual template.
@@ -513,6 +592,14 @@ static void jdata_put(json_value_t jdata, fstr_t jkey, json_value_t val) {
     JSON_SET(jdata, s_key, val);
 }
 
+static bool partial_has_content(html_t* partial) {
+    for (size_t i = 0; i < partial->n_total; i++) {
+        if (partial->iov[i].iov_len > 0)
+            return true;
+    }
+    return false;
+}
+
 static void tpl_execute(wsr_tpl_ctx_t* ctx, wsr_tpl_t* tpl, dict(html_t*)* partials, dict(html_t*)* inlines, json_value_t jdata, html_t* buf, fstr_t tpl_path) {
     for (size_t i = 0; i < tpl->n_elems; i++) {
         wsr_elem_t elem = tpl->elems[i];
@@ -532,7 +619,6 @@ static void tpl_execute(wsr_tpl_ctx_t* ctx, wsr_tpl_t* tpl, dict(html_t*)* parti
             tpl_execute(ctx, elem.tpl, partials, inlines, jdata, inline_buf, tpl_path);
             break;
         } case WSR_ELEM_PRINT: {
-            DBGFN("get ", jdata, " => ", elem.jkey_get);
             json_value_t value = jdata_get(jdata, elem.jkey_get);
             if (value.type == JSON_STRING) {
                 tpl_append_html(wsr_html_escape(value.string_value), buf);
@@ -540,6 +626,20 @@ static void tpl_execute(wsr_tpl_ctx_t* ctx, wsr_tpl_t* tpl, dict(html_t*)* parti
                 html_append(fss(fstr_from_double(value.number_value)), buf);
             } else if (value.type != JSON_NULL) {
                 html_append(json_serial_type(value.type), buf);
+            }
+            break;
+        } case WSR_ELEM_IF: {
+            bool truthy;
+            if (elem.partial_key.len > 0) {
+                html_t** partial = dict_read(partials, html_t*, elem.partial_key);
+                truthy = (partial != 0 && partial_has_content(*partial));
+            } else {
+                truthy = json_truthy(jdata_get(jdata, elem.jkey_get));
+            }
+            if (truthy) {
+                tpl_execute(ctx, elem.tpl, partials, inlines, jdata, buf, tpl_path);
+            } else if (elem.tpl_else != 0) {
+                tpl_execute(ctx, elem.tpl_else, partials, inlines, jdata, buf, tpl_path);
             }
             break;
         } case WSR_ELEM_FOREACH: {
@@ -562,6 +662,7 @@ static void tpl_execute(wsr_tpl_ctx_t* ctx, wsr_tpl_t* tpl, dict(html_t*)* parti
 }
 
 void wsr_tpl_render_jd(wsr_tpl_ctx_t* ctx, fstr_t tpl_path, dict(html_t*)* partials, json_value_t jdata, html_t* buf) {
+    DBGFN("[", tpl_path, "]: ", jdata);
     wsr_tpl_t* template = ctx->precompile? get_compiled_tpl(ctx->precompiled_partials, tpl_path): get_tpl_from_file(ctx, 0, tpl_path);
     dict(html_t*)* inlines = new_dict(html_t*);
     tpl_execute(ctx, template, partials, inlines, jdata, buf, tpl_path);
