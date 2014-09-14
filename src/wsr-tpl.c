@@ -316,7 +316,13 @@ static void inner_compile_tpl(wsr_tpl_ctx_t* ctx, dict(wsr_tpl_t*)* partials, fs
                 .partial_key = se.inl.partial_key,
                 .virt_tpl = v_tpl,
             };
-            list_push_end(parts, tpl_part_t, part);
+            // Inline blocks are always pushed to the start of the template
+            // and executed first to prevent their position from having any
+            // semantic meaning. This makes templates easier to read and
+            // structure. A grammar where inlines is ordered is almost useless
+            // and would only serve as an anti pattern, mostly because
+            // colliding inline keys appends and not replaces.
+            list_push_start(parts, tpl_part_t, part);
         // Begin an if.
         } else if (fstr_prefixes(tpl_tag, "if:")) {
             fstr_t if_args;
