@@ -640,7 +640,7 @@ static void tpl_execute(wsr_tpl_ctx_t* ctx, wsr_tpl_t* tpl, dict(html_t*)* parti
                 html_t** partial = dict_read(partials, html_t*, elem.partial_key);
                 truthy = (partial != 0 && partial_has_content(*partial));
             } else {
-                truthy = json_is_empty(jdata_get(jdata, elem.jkey_get));
+                truthy = !json_is_empty(jdata_get(jdata, elem.jkey_get));
             }
             if (truthy) {
                 tpl_execute(ctx, elem.tpl, partials, inlines, jdata, buf, tpl_path);
