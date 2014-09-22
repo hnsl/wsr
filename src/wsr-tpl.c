@@ -694,31 +694,63 @@ size_t wsr_tpl_length(html_t* html) {
     return len;
 }
 
+static inline fstr_t flush_tail_buf(rio_t* write_h, fstr_t buf, fstr_t buf_tail) {
+    fstr_t chunk = fstr_detail(buf, buf_tail);
+    if (chunk.len > 0)
+        rio_write(write_h, chunk);
+    return buf;
+}
+
 void wsr_tpl_writev(rio_t* write_h, html_t* html) {
-    size_t n_left = html->n_total;
     struct iovec* iov = html->iov;
     int32_t fd = rio_get_fd_write(write_h);
-    while (n_left > 0) {
-        ssize_t writev_r = writev(fd, iov, MIN(n_left, IOV_MAX));
-        if (writev_r == -1) {
-            int32_t err = errno;
-            if (err == EWOULDBLOCK) {
-                lwt_block_until_edge_level_io_event(fd, lwt_fd_event_write);
-            } else if (err != EINTR) {
-                RCD_SYSCALL_EXCEPTION(writev, exception_io);
+    if (fd < 0) {
+        // Rio stream is not associated with file descriptor.
+        // Concatenate small chunks before sending.
+        fstr_t buf = fss(fstr_alloc_buffer(0x1000));
+        fstr_t buf_tail = buf;
+        for (size_t i = 0; i < html->n_total; i++) {
+            struct iovec iov = html->iov[i];
+            fstr_t chunk = {.str = iov.iov_base, .len = iov.iov_len};
+            if (chunk.len > buf_tail.len) {
+                // Flush any existing buffered chunk.
+                buf_tail = flush_tail_buf(write_h, buf, buf_tail);
             }
-            continue;
-        }
-        while (n_left > 0) {
-            if (iov->iov_len <= writev_r) {
-                writev_r -= iov->iov_len;
-                iov->iov_len = 0;
-                n_left--;
-                iov++;
+            if (chunk.len > buf_tail.len) {
+                // Send chunk immediately.
+                rio_write(write_h, chunk);
             } else {
-                iov->iov_len -= writev_r;
-                iov->iov_base += writev_r;
-                break;
+                // Copy chunk to tail buffer.
+                fstr_cpy_over(buf_tail, chunk, &buf_tail, 0);
+            }
+        }
+        // Flush any final buffered chunk.
+        flush_tail_buf(write_h, buf, buf_tail);
+    } else {
+        // Rio stream has file descriptor, write to it directly with writev.
+        size_t n_left = html->n_total;
+        while (n_left > 0) {
+            ssize_t writev_r = writev(fd, iov, MIN(n_left, IOV_MAX));
+            if (writev_r == -1) {
+                int32_t err = errno;
+                if (err == EWOULDBLOCK) {
+                    lwt_block_until_edge_level_io_event(fd, lwt_fd_event_write);
+                } else if (err != EINTR) {
+                    RCD_SYSCALL_EXCEPTION(writev, exception_io);
+                }
+                continue;
+            }
+            while (n_left > 0) {
+                if (iov->iov_len <= writev_r) {
+                    writev_r -= iov->iov_len;
+                    iov->iov_len = 0;
+                    n_left--;
+                    iov++;
+                } else {
+                    iov->iov_len -= writev_r;
+                    iov->iov_base += writev_r;
+                    break;
+                }
             }
         }
     }

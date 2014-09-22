@@ -133,10 +133,17 @@ static size_t default_post_limit_cb(wsr_req_t* req, void* cb_arg) {
 }
 
 wsr_cfg_t wsr_default_cfg() {
+    rio_in_addr4_t default_bind = {.port = 80};
     wsr_cfg_t cfg = {
-        .bind.port = 80,
+        .bind = new_list(rio_in_addr4_t, default_bind),
         .tcp_backlog = 1024,
         .post_limit_cb = default_post_limit_cb,
+        .tcp_ka = {
+            .idle_before_ping_s = 5,
+            .ping_interval_s = 4,
+            .count_before_timeout = 4,
+        },
+        .max_req_hdr_wait_ns = RIO_NS_SEC * 15,
     };
     return cfg;
 }
@@ -384,29 +391,34 @@ typedef struct wss_cb_arg {
     void* cb_arg;
 } wss_cb_arg_t;
 
-static wss_cb_arg_t http_session(rio_t* client_h, wsr_cfg_t cfg) {
-    // Set tcp keep-alive.
-    if (cfg.tcp_ka.idle_before_ping_s > 0 && cfg.tcp_ka.ping_interval_s > 0 && cfg.tcp_ka.count_before_timeout > 0)
-        rio_tcp_set_keepalive(client_h, cfg.tcp_ka);
+static wss_cb_arg_t http_session(rio_t* client_h, wsr_cfg_t cfg, rio_in_addr4_t local_addr, rio_in_addr4_t remote_addr, void* conn_data) {
     // Allocate header buffer.
     fstr_t header_buf = fss(fstr_alloc_buffer(WSR_MIN_ACCEPTED_HEADER_SIZE));
     for (;;) sub_heap {
         // Read raw header of next request.
         fstr_t raw_headers;
-        try {
-            raw_headers = rio_read_to_separator(client_h, "\r\n\r\n", header_buf);
-        } catch (exception_io, e) {
-            // Peek first, this will throw another io exception if stream was closed.
-            rio_peek(client_h);
-            // Buffer ran out, got too large request header.
-            http_reply_simple_status(client_h, HTTP_REQ_HDR_TOO_LARGE);
-            throw_fwd("end of stream or too large request header", exception_io, e);
+        sub_heap {
+            if (cfg.max_req_hdr_wait_ns > 0)
+                ifc_cancel_alarm_arm(cfg.max_req_hdr_wait_ns);
+            try {
+                raw_headers = rio_read_to_separator(client_h, "\r\n\r\n", header_buf);
+            } catch (exception_io, e) {
+                // Peek first, this will throw another io exception if stream was closed.
+                rio_peek(client_h);
+                // Buffer ran out, got too large request header.
+                http_reply_simple_status(client_h, HTTP_REQ_HDR_TOO_LARGE);
+                throw_fwd("end of stream or too large request header", exception_io, e);
+            }
         }
         // Parse request-line.
         fstr_t req_line;
         if (!fstr_iterate_trim(&raw_headers, "\r\n", &req_line))
             request_header_error(client_h);
-        wsr_req_t req = {0};
+        wsr_req_t req = {
+            .local_addr = local_addr,
+            .remote_addr = remote_addr,
+            .conn_data = conn_data,
+        };
         fstr_t method, path, version;
         if (!parse_req_line(req_line, &method, &path, &version))
             request_header_error(client_h);
@@ -560,6 +572,7 @@ static wss_cb_arg_t http_session(rio_t* client_h, wsr_cfg_t cfg) {
             }
             list_push_end(raw_headers, fstr_t, "server: wsr/" WSR_VERSION);
             list_push_end(raw_headers, fstr_t, concs("date: ", fss(rio_clock_to_rfc1123(rio_get_time_clock()))));
+            list_push_end(raw_headers, fstr_t, "connection: keep-alive");
             list_push_end(raw_headers, fstr_t, "\r\n");
             fstr_t raw_header = fss(fstr_implode(raw_headers, "\r\n"));
             //*x-dbg*/ DBGFN(">>[", raw_header, "]<<");
@@ -850,9 +863,9 @@ static void web_socket_session(rio_t* client_h, wss_cb_arg_t wss_cb) { sub_heap 
     wss_cb.wss_cb(peer, reader_sf, writer_sf, wss_cb.cb_arg);
 }}
 
-fiber_main http_connection_fiber(fiber_main_attr, rio_t* client_h, wsr_cfg_t cfg) { try {
+fiber_main http_connection_fiber(fiber_main_attr, rio_t* client_h, wsr_cfg_t cfg, rio_in_addr4_t local_addr, rio_in_addr4_t remote_addr, void* conn_data) { try {
     // Handle http session until it upgrades to a web socket session.
-    wss_cb_arg_t wss_cb = http_session(client_h, cfg);
+    wss_cb_arg_t wss_cb = http_session(client_h, cfg, local_addr, remote_addr, conn_data);
     // Handle web socket session.
     web_socket_session(client_h, wss_cb);
 } catch (exception_io | exception_desync, e) {
@@ -986,22 +999,70 @@ void wsr_response_add_cookie(wsr_rsp_t* rsp, wsr_set_cookie_t set_cookie) {
    }
 }
 
+join_locked(void) server_exception(rcd_exception_t* e, join_server_params, rcd_exception_t** e_out) {
+    server_heap_flip {
+        lwt_alloc_import(e->exception_heap);
+        *e_out = e;
+    }
+}
+
+fiber_main wsr_server_fiber(fiber_main_attr, wsr_cfg_t cfg, rcd_fid_t parent_fid, rio_in_addr4_t bind_addr, rio_t* server) { try {
+    try {
+        for (;;) sub_heap {
+            rio_in_addr4_t remote_addr;
+            rio_t* raw_h = rio_tcp_accept(server, &remote_addr);
+            // Set tcp keep-alive.
+            if (cfg.tcp_ka.idle_before_ping_s > 0 && cfg.tcp_ka.ping_interval_s > 0 && cfg.tcp_ka.count_before_timeout > 0)
+                rio_tcp_set_keepalive(raw_h, cfg.tcp_ka);
+            fmitosis {
+                rio_in_addr4_t local_addr = rio_get_socket_address(raw_h, false);
+                rio_in_addr4_t remote_addr = rio_get_socket_address(raw_h, true);
+                rio_t* client_h = rio_realloc_peek_buffer(raw_h, WSR_READ_PEEK_BUF_SIZE);
+                void* conn_data = 0;
+                if (cfg.conn_cb != 0) {
+                    // Replace the stream with whatever the conn_cb returns.
+                    client_h = cfg.conn_cb(client_h, bind_addr, &conn_data, cfg.conn_cb_arg);
+                }
+                fstr_t fiber_name = fss(rio_serial_in_addr4(local_addr));
+                spawn_static_fiber(http_connection_fiber(fiber_name, client_h, cfg, local_addr, remote_addr, conn_data));
+            }
+        }
+    } catch (exception_io | exception_arg, e) {
+        // Pass the exception to the parent.
+        server_exception(e, parent_fid);
+    }
+} catch (exception_desync, e); }
+
 void wsr_start(wsr_cfg_t cfg) { sub_heap {
     assert(cfg.req_cb != 0);
     // Accept tcp connections.
-    rio_t* server = rio_tcp_server(cfg.bind, cfg.tcp_backlog);
-    if (cfg.init_cb != 0) {
-        cfg.init_cb(cfg.init_arg);
+    typedef struct {
+        rio_in_addr4_t bind_addr;
+        rio_t* server;
+    } sb_t;
+    list(sb_t)* sbs = new_list(sb_t);
+    list_foreach(cfg.bind, rio_in_addr4_t, bind_addr) {
+        sb_t sb = {
+            .bind_addr = bind_addr,
+            .server = rio_tcp_server(bind_addr, cfg.tcp_backlog),
+        };
+        list_push_end(sbs, sb_t, sb);
     }
-    for (;;) sub_heap {
-        rio_in_addr4_t remote_addr;
-        rio_t* raw_h = rio_tcp_accept(server, &remote_addr);
+    // Init done. Call callback.
+    if (cfg.init_cb != 0)
+        cfg.init_cb(cfg.init_cb_arg);
+    // Spawn server fibers.
+    list_foreach(sbs, sb_t, sb) {
         fmitosis {
-            rio_t* client_h = rio_realloc_peek_buffer(raw_h, WSR_READ_PEEK_BUF_SIZE);
-            fstr_t fiber_name = fss(rio_serial_in_addr4(rio_get_socket_address(client_h, true)));
-            spawn_static_fiber(http_connection_fiber(fiber_name, client_h, cfg));
+            fstr_t fiber_name = fss(rio_serial_in_addr4(sb.bind_addr));
+            spawn_fiber(wsr_server_fiber(fiber_name, cfg, rcd_self, sb.bind_addr, sb.server));
         }
     }
+    // Wait for one exception to be thrown.
+    rcd_exception_t* e;
+    accept_join(server_exception, join_server_params, &e);
+    // Cancel all servers and throw e.
+    throw_fwd_same("wsr server was interrupted by server exception", e);
 }}
 
 wsr_rsp_t* wsr_response(wsr_status_t status) {

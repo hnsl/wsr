@@ -29,16 +29,28 @@ typedef struct wsr_post_file_data {
 
 /// An incoming http request.
 typedef struct wsr_req {
+    /// Local address for connection.
+    rio_in_addr4_t local_addr;
+    /// Remote address for connection.
+    rio_in_addr4_t remote_addr;
+    /// Method for request.
     wsr_method_t method;
+    /// Path of request.
     fstr_t path;
     /// Requests headers. All keys are trimmed and lowercased. All values are trimmed.
     dict(fstr_t)* headers;
+    /// Parsed url parameters of request.
     dict(fstr_t)* url_params;
+    /// Content type if posting data.
     fstr_t content_type;
     /// Raw unparsed request post body.
     fstr_t post_body;
+    /// Parsed request body if sending form fields.
     dict(fstr_t)* post_params;
+    /// Parsed file data (uploads) sent with post.
     dict(wsr_post_file_data_t)* post_file_data;
+    /// Additional connection data set by the application in the connection callback.
+    void* conn_data;
 } wsr_req_t;
 
 decl_fid_t(wssr);
@@ -93,11 +105,15 @@ typedef wsr_rsp_t* (*wsr_req_cb_t)(wsr_req_t* req, void* cb_arg);
 typedef size_t (*wsr_post_limit_cb_t)(wsr_req_t* req, void* cb_arg);
 
 /// Callback for init.
-typedef void (*wsr_init_cb_t)(void* init_arg);
+typedef void (*wsr_init_cb_t)(void* init_cb_arg);
+
+/// Callback for new connections.
+typedef rio_t* (*wsr_conn_cb_t)(rio_t* raw_socket, rio_in_addr4_t bind_addr, void** out_conn_data, void* conn_cb_arg);
 
 typedef struct wsr_cfg {
-    /// Address the http server should bind and listen to.
-    rio_in_addr4_t bind;
+    /// Addresses the http server should bind and listen to.
+    /// At least one entry is required.
+    list(rio_in_addr4_t)* bind;
     /// TCP backlog size.
     int32_t tcp_backlog;
     /// Pre-request callback for POST requests. Returns the maximum allowed
@@ -105,14 +121,25 @@ typedef struct wsr_cfg {
     wsr_post_limit_cb_t post_limit_cb;
     /// TCP keep alive configuration.
     rio_tcp_ka_t tcp_ka;
+    /// Maximum time to wait for full request headers to be sent.
+    uint128_t max_req_hdr_wait_ns;
     /// Callback for standard web requests.
     wsr_req_cb_t req_cb;
     /// Extra argument passed to callback.
     void* cb_arg;
-    /// Callback for init. Will be called when the wsr server is started.
+    /// Optional callback for init. Will be called when the wsr server is
+    /// started.
     wsr_init_cb_t init_cb;
     /// Extra argument passed to init callback.
-    void* init_arg;
+    void* init_cb_arg;
+    /// Optional callback for new connections. This gives the application
+    /// the ability to inject a new data layer (for example TLS) or reject
+    /// connections based on the peer address without caring what they send.
+    /// Additional data could also be set for the connection. Any memory leaked
+    /// from the function call will persist for the duration of the connection.
+    wsr_conn_cb_t conn_cb;
+    /// Extra argument passed to conn callback.
+    void* conn_cb_arg;
 } wsr_cfg_t;
 
 /// Standard http status codes.
