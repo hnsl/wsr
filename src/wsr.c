@@ -1107,13 +1107,25 @@ wsr_rsp_t* wsr_response_html(wsr_status_t status, struct html* html) {
     }
 }
 
-wsr_rsp_t* wsr_response_redirect(fstr_t path) {
-    wsr_rsp_t* rsp = wsr_response(HTTP_FOUND);
+static wsr_rsp_t* wsr_response_redirect_status(wsr_status_t status, fstr_t uri) {
+    wsr_rsp_t* rsp = wsr_response(status);
     switch_heap(rsp->heap) {
         rsp->headers = new_dict(fstr_t);
-        (void) dict_insert(rsp->headers, fstr_t, fstr("location"), path);
+        (void) dict_insert(rsp->headers, fstr_t, fstr("location"), uri);
         return rsp;
     }
+}
+
+wsr_rsp_t* wsr_response_redirect(fstr_t uri) {
+    return wsr_response_redirect_status(HTTP_TEMP_REDIRECT, uri);
+}
+
+wsr_rsp_t* wsr_response_redirect_permanent(fstr_t uri) {
+    return wsr_response_redirect_status(HTTP_MOVED_PERM, uri);
+}
+
+wsr_rsp_t* wsr_response_redirect_other(fstr_t uri) {
+    return wsr_response_redirect_status(HTTP_SEE_OTHER, uri);
 }
 
 wsr_rsp_t* wsr_response_web_socket(wsr_req_t* req, wsr_wss_cb_t wss_cb, fstr_t ws_protocol, void* cb_arg) {

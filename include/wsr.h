@@ -273,7 +273,16 @@ wsr_rsp_t* wsr_response_dynamic(wsr_status_t status, fstr_mem_t* body, fstr_t mi
 
 wsr_rsp_t* wsr_response_html(wsr_status_t status, struct html* html);
 
-wsr_rsp_t* wsr_response_redirect(fstr_t path);
+/// Redirects the request to the specified uri with "307 temporary redirect":
+/// Provides a new URL for the browser to resubmit a GET or POST request.
+wsr_rsp_t* wsr_response_redirect(fstr_t uri);
+
+/// Redirects the request to the specified uri with "301 moved permanently".
+wsr_rsp_t* wsr_response_redirect_permanent(fstr_t uri);
+
+/// Redirects the request to the specified uri with "303 see other":
+/// Forces a GET request to the new URL even if original request was POST.
+wsr_rsp_t* wsr_response_redirect_other(fstr_t uri);
 
 /// Returns a virtual response indicating that connection should be upgraded to web socket.
 wsr_rsp_t* wsr_response_web_socket(wsr_req_t* req, wsr_wss_cb_t wss_cb, fstr_t ws_protocol, void* cb_arg);
