@@ -1016,7 +1016,6 @@ fiber_main wsr_server_fiber(fiber_main_attr, wsr_cfg_t cfg, rcd_fid_t parent_fid
                 rio_tcp_set_keepalive(raw_h, cfg.tcp_ka);
             fmitosis {
                 rio_in_addr4_t local_addr = rio_get_socket_address(raw_h, false);
-                rio_in_addr4_t remote_addr = rio_get_socket_address(raw_h, true);
                 rio_t* client_h = rio_realloc_peek_buffer(raw_h, WSR_READ_PEEK_BUF_SIZE);
                 void* conn_data = 0;
                 if (cfg.conn_cb != 0) {
