@@ -187,6 +187,35 @@ static inline bool parse_req_line(fstr_t req_line, fstr_t* out_method, fstr_t* o
     }
 }
 
+fstr_mem_t* wsr_urlencode(fstr_t str, bool plus_enc_sp) {
+    fstr_mem_t* buf = fstr_alloc(str.len * 3);
+    fstr_t buf_tail = fss(buf);
+    for (size_t i = 0; i < str.len; i++) {
+        uint8_t ch = str.str[i];
+        if ((ch >= 0 && ch <= 9)
+        || (ch >= 'A' && ch <= 'Z')
+        || (ch >= 'a' && ch <= 'z')
+        || (ch == '-')
+        || (ch == '.')
+        || (ch == '_')
+        || (ch == '~')) {
+            // Copy over raw character.
+            fstr_putc(&buf_tail, ch);
+        } else if (plus_enc_sp && ch == ' ') {
+            // Plus encode space.
+            fstr_putc(&buf_tail, '+');
+        } else {
+            // Hexencode the character.
+            fstr_putc(&buf_tail, '%');
+            fstr_serial_uint(fstr_slice(buf_tail, 0, 2), ch, 16);
+            buf_tail = fstr_slice(buf_tail, 2, -1);
+        }
+    }
+    // Throw away the unwritten length of the buffer and return it.
+    buf->len = fstr_detail(fss(buf), buf_tail).len;
+    return buf;
+}
+
 static inline bool is_hex(uint8_t ch) {
     return
         ('0' <= ch && ch <= '9') ||
@@ -201,18 +230,18 @@ static inline uint32_t hex_to_int(uint8_t ch) {
     unreachable();
 }
 
-static inline fstr_mem_t* decode_x_www_form_urlencoded(fstr_t enc, bool decode_space) {
-    fstr_mem_t* out = fstr_alloc(enc.len);
+fstr_mem_t* wsr_urldecode(fstr_t str, bool plus_dec_sp) {
+    fstr_mem_t* out = fstr_alloc(str.len);
     size_t out_i = 0;
-    for (size_t i = 0; i < enc.len; i++) {
+    for (size_t i = 0; i < str.len; i++) {
         uint8_t ch;
-        if (enc.str[i] == '%' && i + 2 < enc.len && is_hex(enc.str[i + 1]) && is_hex(enc.str[i + 2])) {
-            ch = hex_to_int(enc.str[i + 1]) * 16 + hex_to_int(enc.str[i + 2]);
+        if (str.str[i] == '%' && i + 2 < str.len && is_hex(str.str[i + 1]) && is_hex(str.str[i + 2])) {
+            ch = hex_to_int(str.str[i + 1]) * 16 + hex_to_int(str.str[i + 2]);
             i += 2;
-        } else if (decode_space && enc.str[i] == '+') {
+        } else if (plus_dec_sp && str.str[i] == '+') {
             ch = ' ';
         } else {
-            ch = enc.str[i];
+            ch = str.str[i];
         }
         out->str[out_i] = ch;
         out_i++;
@@ -228,8 +257,8 @@ static void decode_many_x_www_form_urlencoded(fstr_t data, dict(fstr_t)* url_par
             enc_key = param;
             enc_value = "";
         }
-        fstr_t key = fss(decode_x_www_form_urlencoded(enc_key, true));
-        fstr_t value = fss(decode_x_www_form_urlencoded(enc_value, true));
+        fstr_t key = fss(wsr_urldecode(enc_key, true));
+        fstr_t value = fss(wsr_urldecode(enc_value, true));
         dict_replace(url_params, fstr_t, key, value);
     }
 }
@@ -312,10 +341,10 @@ static void decode_multipart_formdata(rio_t* client_h, fstr_t data, fstr_t bound
             }
 match:
             name = fss(fstr_replace(name, "\\\"", "\""));
-            name = fss(decode_x_www_form_urlencoded(name, false));
+            name = fss(wsr_urldecode(name, false));
             if (file_name.len > 0) {
                 file_name = fss(fstr_replace(file_name, "\\\"", "\""));
-                file_name = fss(decode_x_www_form_urlencoded(file_name, false));
+                file_name = fss(wsr_urldecode(file_name, false));
                 file.file_name = file_name;
             }
             // Parse the rest of the data and insert it as POST data.

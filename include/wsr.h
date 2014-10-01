@@ -216,6 +216,15 @@ extern const fstr_t wsr_ws_handshake_guid;
 /// Gets a built-in reason phrase from a status code.
 fstr_t wsr_reason(wsr_status_t status);
 
+/// URL encodes the string. All characters will be encoded as %xx except
+/// alphanums and "-._~" as per rfc 3986. If plus_enc_sp is true space will be
+/// encoded as "+". This is deprecated and should be avoided.
+fstr_mem_t* wsr_urlencode(fstr_t str, bool plus_enc_sp);
+
+/// URL decodes the string as per rfc 3986. If plus_dec_sp is true "+" will be
+/// decoded as a space. This is deprecated and should be avoided.
+fstr_mem_t* wsr_urldecode(fstr_t str, bool plus_dec_sp);
+
 /// Gets a default initialized http configuration.
 wsr_cfg_t wsr_default_cfg();
 
