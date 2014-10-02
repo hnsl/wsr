@@ -221,6 +221,26 @@ fstr_mem_t* wsr_urldecode(fstr_t str, bool plus_dec_sp) {
     return out;
 }
 
+fstr_mem_t* wsr_url_query_encode(dict(fstr_t)* param) {
+    if (dict_count(param, fstr_t) == 0)
+        return fstr_cpy("");
+    sub_heap {
+        list(fstr_t)* parts = new_list(fstr_t, "?");
+        bool first = true;
+        dict_foreach(param, fstr_t, key, value) {
+            if (first) {
+                first = false;
+            } else {
+                list_push_end(parts, fstr_t, "&");
+            }
+            list_push_end(parts, fstr_t, fss(wsr_urlencode(key, false)));
+            list_push_end(parts, fstr_t, "=");
+            list_push_end(parts, fstr_t, fss(wsr_urlencode(value, false)));
+        }
+        return escape(fstr_implode(parts, ""));
+    }
+}
+
 static void decode_many_x_www_form_urlencoded(fstr_t data, dict(fstr_t)* url_params) {
     for (fstr_t param; fstr_iterate_trim(&data, "&", &param);) {
         fstr_t enc_key, enc_value;

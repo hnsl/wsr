@@ -220,6 +220,12 @@ fstr_t wsr_reason(wsr_status_t status);
 /// decoded as a space. This is deprecated and should be avoided.
 fstr_mem_t* wsr_urldecode(fstr_t str, bool plus_dec_sp);
 
+/// URL encodes a query suitable for appending to a URL with the specified
+/// parameters. If params is empty an empty string is returned, otherwise
+/// a string starting with a ? is returned with each key and value properly
+/// separated and escaped.
+fstr_mem_t* wsr_url_query_encode(dict(fstr_t)* param);
+
 /// Gets a default initialized http configuration.
 wsr_cfg_t wsr_default_cfg();
 
