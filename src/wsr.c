@@ -187,35 +187,6 @@ static inline bool parse_req_line(fstr_t req_line, fstr_t* out_method, fstr_t* o
     }
 }
 
-fstr_mem_t* wsr_urlencode(fstr_t str, bool plus_enc_sp) {
-    fstr_mem_t* buf = fstr_alloc(str.len * 3);
-    fstr_t buf_tail = fss(buf);
-    for (size_t i = 0; i < str.len; i++) {
-        uint8_t ch = str.str[i];
-        if ((ch >= 0 && ch <= 9)
-        || (ch >= 'A' && ch <= 'Z')
-        || (ch >= 'a' && ch <= 'z')
-        || (ch == '-')
-        || (ch == '.')
-        || (ch == '_')
-        || (ch == '~')) {
-            // Copy over raw character.
-            fstr_putc(&buf_tail, ch);
-        } else if (plus_enc_sp && ch == ' ') {
-            // Plus encode space.
-            fstr_putc(&buf_tail, '+');
-        } else {
-            // Hexencode the character.
-            fstr_putc(&buf_tail, '%');
-            fstr_serial_uint(fstr_slice(buf_tail, 0, 2), ch, 16);
-            buf_tail = fstr_slice(buf_tail, 2, -1);
-        }
-    }
-    // Throw away the unwritten length of the buffer and return it.
-    buf->len = fstr_detail(fss(buf), buf_tail).len;
-    return buf;
-}
-
 static inline bool is_hex(uint8_t ch) {
     return
         ('0' <= ch && ch <= '9') ||
