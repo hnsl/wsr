@@ -187,73 +187,6 @@ static inline bool parse_req_line(fstr_t req_line, fstr_t* out_method, fstr_t* o
     }
 }
 
-static inline bool is_hex(uint8_t ch) {
-    return
-        ('0' <= ch && ch <= '9') ||
-        ('A' <= ch && ch <= 'F') ||
-        ('a' <= ch && ch <= 'f');
-}
-
-static inline uint32_t hex_to_int(uint8_t ch) {
-    if ('0' <= ch && ch <= '9') return ch - '0';
-    if ('A' <= ch && ch <= 'F') return ch - 'A' + 10;
-    if ('a' <= ch && ch <= 'f') return ch - 'a' + 10;
-    unreachable();
-}
-
-fstr_mem_t* wsr_urldecode(fstr_t str, bool plus_dec_sp) {
-    fstr_mem_t* out = fstr_alloc(str.len);
-    size_t out_i = 0;
-    for (size_t i = 0; i < str.len; i++) {
-        uint8_t ch;
-        if (str.str[i] == '%' && i + 2 < str.len && is_hex(str.str[i + 1]) && is_hex(str.str[i + 2])) {
-            ch = hex_to_int(str.str[i + 1]) * 16 + hex_to_int(str.str[i + 2]);
-            i += 2;
-        } else if (plus_dec_sp && str.str[i] == '+') {
-            ch = ' ';
-        } else {
-            ch = str.str[i];
-        }
-        out->str[out_i] = ch;
-        out_i++;
-    }
-    out->len = out_i;
-    return out;
-}
-
-fstr_mem_t* wsr_url_query_encode(dict(fstr_t)* param) {
-    if (dict_count(param, fstr_t) == 0)
-        return fstr_cpy("");
-    sub_heap {
-        list(fstr_t)* parts = new_list(fstr_t, "?");
-        bool first = true;
-        dict_foreach(param, fstr_t, key, value) {
-            if (first) {
-                first = false;
-            } else {
-                list_push_end(parts, fstr_t, "&");
-            }
-            list_push_end(parts, fstr_t, fss(wsr_urlencode(key, false)));
-            list_push_end(parts, fstr_t, "=");
-            list_push_end(parts, fstr_t, fss(wsr_urlencode(value, false)));
-        }
-        return escape(fstr_implode(parts, ""));
-    }
-}
-
-static void decode_many_x_www_form_urlencoded(fstr_t data, dict(fstr_t)* url_params) {
-    for (fstr_t param; fstr_iterate_trim(&data, "&", &param);) {
-        fstr_t enc_key, enc_value;
-        if (!fstr_divide(param, "=", &enc_key, &enc_value)) {
-            enc_key = param;
-            enc_value = "";
-        }
-        fstr_t key = fss(wsr_urldecode(enc_key, true));
-        fstr_t value = fss(wsr_urldecode(enc_value, true));
-        dict_replace(url_params, fstr_t, key, value);
-    }
-}
-
 static void request_header_error(rio_t* client_h) {
     // Return bad request and close connection.
     http_reply_simple_status(client_h, HTTP_BAD_REQUEST);
@@ -332,10 +265,10 @@ static void decode_multipart_formdata(rio_t* client_h, fstr_t data, fstr_t bound
             }
 match:
             name = fss(fstr_replace(name, "\\\"", "\""));
-            name = fss(wsr_urldecode(name, false));
+            name = fss(rest_urldecode(name, false));
             if (file_name.len > 0) {
                 file_name = fss(fstr_replace(file_name, "\\\"", "\""));
-                file_name = fss(wsr_urldecode(file_name, false));
+                file_name = fss(rest_urldecode(file_name, false));
                 file.file_name = file_name;
             }
             // Parse the rest of the data and insert it as POST data.
@@ -458,11 +391,11 @@ static wss_cb_arg_t http_session(rio_t* client_h, wsr_cfg_t cfg, rio_in_addr4_t 
             throw("got unsupported http method from client", exception_io);
         }
         // Extract URL parameters.
-        req.url_params = new_dict(fstr_t);
         fstr_t url_params;
         if (fstr_divide(path, "?", &req.path, &url_params)) {
-            decode_many_x_www_form_urlencoded(url_params, req.url_params);
+            req.url_params = rest_url_query_decode(url_params);
         } else {
+            req.url_params = new_dict(fstr_t);
             req.path = path;
         }
         // Index headers from client.
@@ -480,7 +413,6 @@ static wss_cb_arg_t http_session(rio_t* client_h, wsr_cfg_t cfg, rio_in_addr4_t 
         fstr_t* content_length_str = dict_read(req.headers, fstr_t, "content-length");
         uint128_t content_length = (content_length_str != 0? fs2ui(*content_length_str): 0);
         if (req.method == METHOD_POST) {
-            req.post_params = new_dict(fstr_t);
             req.post_file_data = 0;
             fstr_t* maybe_content_type = dict_read(req.headers, fstr_t, "content-type");
             req.content_type = (maybe_content_type != 0? *maybe_content_type: "");
@@ -524,10 +456,11 @@ static wss_cb_arg_t http_session(rio_t* client_h, wsr_cfg_t cfg, rio_in_addr4_t 
                 rio_read_fill(client_h, req.post_body);
             }
             if (fstr_equal_case(req.content_type, "application/x-www-form-urlencoded")) {
-                decode_many_x_www_form_urlencoded(req.post_body, req.post_params);
+                req.post_params = rest_url_query_decode(req.post_body);
             } else if (fstr_equal_case(req.content_type, "multipart/form-data")) {
                 if (multipart_boundary.len == 0)
                     request_header_error(client_h);
+                req.post_params = new_dict(fstr_t);
                 req.post_file_data = new_dict(wsr_post_file_data_t);
                 decode_multipart_formdata(client_h, req.post_body, multipart_boundary, req.post_params, req.post_file_data);
             }
