@@ -45,6 +45,11 @@ struct html {
     struct iovec* iov;
 };
 
+struct wsr_tpl_ctx {
+    wsr_tpl_cfg_t cfg;
+    dict(wsr_tpl_t*)* precompiled_partials;
+};
+
 static size_t trq_iovcap_hint = 0x1;
 
 static wsr_tpl_t* get_tpl_from_file(wsr_tpl_ctx_t* ctx, dict(wsr_tpl_t*)* partials_in, fstr_t tpl_path) ;
@@ -150,12 +155,155 @@ static fstr_t tpl_filename(fstr_t tpl_id, bool* out_expect_wrapper) {
     }
 }
 
-static fstr_mem_t* read_tpl_file(wsr_tpl_ctx_t* ctx, fstr_t filename) {
-    fstr_t raw_tpl_path = concs(ctx->root_tpl_path, "/", filename);
+static inline bool is_htmltagc(uint8_t ch) {
+    return (ch == '<' || ch == '>');
+}
+
+static bool is_escape_trailed(fstr_t str) {
+    // Count trailing escapes.
+    size_t n_trail_esc = 0;
+    for (size_t i = 0; i < str.len; i++) {
+        if (str.str[str.len - i - 1] != '\\')
+            break;
+        n_trail_esc++;
+    }
+    return ((n_trail_esc % 2) != 0);
+}
+
+static fstr_mem_t* clean_partial(fstr_t raw_partial) { sub_heap {
+    // Trim away leading and trailing whitespace.
+    raw_partial = fstr_trim(raw_partial);
+    // Clean out comments.
+    {
+        list(fstr_t)* chunks = new_list(fstr_t);
+        for (fstr_t pre_comment; fstr_iterate(&raw_partial, "<!--", &pre_comment);) {
+            fstr_t comment, post_comment;
+            if (!fstr_divide(raw_partial, "-->", &comment, &post_comment)) {
+                // The rest of the file is a comment.
+                comment = raw_partial;
+                post_comment = fstr_slice(pre_comment, -1, -1);
+            }
+            if (fstr_prefixes(comment, "[if")) {
+                // Browser switch comment, keep everything.
+                pre_comment.len = (post_comment.str - pre_comment.str);
+            }
+            list_push_end(chunks, fstr_t, pre_comment);
+            // Adjust raw_partial to parse.
+            raw_partial = post_comment;
+        }
+        raw_partial = fstr_trim(fss(fstr_implode(chunks, "")));
+    }
+    // Clean out script comments.
+    {
+        list(fstr_t)* chunks = new_list(fstr_t);
+        for (fstr_t pre_script; fstr_iterate(&raw_partial, "<script", &pre_script);) {
+            fstr_t script, post_script;
+            if (!fstr_divide(raw_partial, "</script>", &script, &post_script)) {
+                // The rest of the file is a script.
+                script = raw_partial;
+                post_script = fstr_slice(raw_partial, -1, -1);
+            }
+            list_push_end(chunks, fstr_t, pre_script);
+            list_push_end(chunks, fstr_t, "<script");
+            // Loop through lines of script and remove line comments.
+            for (fstr_t script_line; fstr_iterate(&script, "\n", &script_line);) {
+                // Loop through strings in script and remove line comments.
+                while (script_line.len > 0) {
+                    fstr_t pre_str;
+                    bool has_str = fstr_divide(script_line, "\"", &pre_str, &script_line);
+                    if (!has_str)
+                        pre_str = script_line;
+                    fstr_t script_code, script_comment;
+                    if (fstr_divide(pre_str, "//", &script_code, &script_comment)) {
+                        while (is_escape_trailed(script_code)) {
+                            // Invalid comment, keep parsing.
+                            fstr_t cont_code;
+                            if (!fstr_divide(script_comment, "//", &cont_code, &script_comment))
+                                goto no_comment_after_all;
+                            script_code.len = (cont_code.str - script_code.str) + cont_code.len;
+                        }
+                        // Comment in pre_str, add before comment and throw away rest.
+                        list_push_end(chunks, fstr_t, script_code);
+                        break;
+                    }
+                    no_comment_after_all:
+                    list_push_end(chunks, fstr_t, pre_str);
+                     if (!has_str)
+                         break;
+                    fstr_t str, post_str;
+                    if (!fstr_divide(script_line, "\"", &str, &post_str)) {
+                        // Rest of line is a string.
+                        rest_is_string:
+                        str = script_line;
+                        post_str = fstr_slice(script_line, -1, -1);
+                    } else {
+                        for (;;) {
+                            if (!is_escape_trailed(str))
+                                break;
+                            // The end of string is not valid, keep parsing.
+                            fstr_t cont_str;
+                            if (!fstr_divide(post_str, "\"", &cont_str, &post_str))
+                                goto rest_is_string;
+                            str.len = (cont_str.str - str.str) + cont_str.len;
+                        }
+                    }
+                    // Add string.
+                    list_push_end(chunks, fstr_t, "\"");
+                    list_push_end(chunks, fstr_t, str);
+                    list_push_end(chunks, fstr_t, "\"");
+                    // Adjust script_line to parse.
+                    script_line = post_str;
+                }
+                list_push_end(chunks, fstr_t, "\n");
+            }
+            list_push_end(chunks, fstr_t, "</script>");
+            // Adjust raw_partial to parse.
+            raw_partial = post_script;
+        }
+        raw_partial = fstr_trim(fss(fstr_implode(chunks, "")));
+    }
+    // Clean out whitespace with no semantic meaning.
+    {
+        list(fstr_t)* chunks = new_list(fstr_t);
+        for (;;) {
+            fstr_t start_s, end_s;
+            {
+                fstr_t match_s = raw_partial;
+                #pragma re2c(match_s): ^([^\s]* [^\s]){start_s} \s+ ([^\s]){end_s} {@match_ws}
+                // End of partial, add rest and stop.
+                list_push_end(chunks, fstr_t, raw_partial);
+                break;
+            } match_ws: {
+                list_push_end(chunks, fstr_t, start_s);
+                uint8_t startc = start_s.str[start_s.len - 1];
+                uint8_t endc = end_s.str[0];
+                if (is_htmltagc(startc) && is_htmltagc(endc)) {
+                    // Remove whitespace.
+                } else {
+                    // Keep single space that may have semantic meaning.
+                    list_push_end(chunks, fstr_t, " ");
+                }
+                // Adjust raw_partial to parse.
+                raw_partial = fstr_slice(raw_partial, (end_s.str - raw_partial.str), -1);
+                continue;
+            }
+        }
+        return escape(fstr_implode(chunks, ""));
+    }
+}}
+
+static fstr_mem_t* read_tpl_file(wsr_tpl_ctx_t* ctx, fstr_t filename) { sub_heap {
+    fstr_t raw_tpl_path = concs(ctx->cfg.root_tpl_path, "/", filename);
     if (!rio_file_exists(raw_tpl_path))
         throw_eio(concs("could not find template [", filename, "]"), wsr_tpl_invalid);
-    return rio_read_file_contents(raw_tpl_path);
-}
+    fstr_mem_t* raw_tpl = rio_read_file_contents(raw_tpl_path);
+    if (ctx->cfg.clean_tpls) {
+        DBGFN("PRE >>>[", fss(raw_tpl), "]<<<");
+        raw_tpl = clean_partial(fss(raw_tpl));
+        DBGFN("POST >>>[", fss(raw_tpl), "]<<<");
+    }
+    return escape(raw_tpl);
+}}
 
 static void throw_invalid_tag(fstr_t tpl_id, fstr_t tpl_tag) {
     throw_eio(concs("template [,", tpl_id, "] contains invalid <{", tpl_tag, "}>"), wsr_tpl_invalid);
@@ -545,7 +693,7 @@ static void compile_tpl_file(wsr_tpl_ctx_t* ctx, dict(wsr_tpl_t*)* partials, fst
 static wsr_tpl_t* get_tpl_from_file(wsr_tpl_ctx_t* ctx, dict(wsr_tpl_t*)* partials_in, fstr_t tpl_path) {
     dict(wsr_tpl_t*)* partials = partials_in;
     if (partials == 0)
-        partials = (ctx->precompile)? ctx->precompiled_partials: new_dict(wsr_tpl_t*);
+        partials = (ctx->cfg.precompile_tpls)? ctx->precompiled_partials: new_dict(wsr_tpl_t*);
     compile_tpl_file(ctx, partials, tpl_path);
     return get_compiled_tpl(partials, tpl_path);
 }
@@ -669,7 +817,7 @@ static void tpl_execute(wsr_tpl_ctx_t* ctx, wsr_tpl_t* tpl, dict(html_t*)* parti
 
 void wsr_tpl_render_jd(wsr_tpl_ctx_t* ctx, fstr_t tpl_path, dict(html_t*)* partials, json_value_t jdata, html_t* buf) {
     DBGFN("[", tpl_path, "]: ", jdata);
-    wsr_tpl_t* template = ctx->precompile? get_compiled_tpl(ctx->precompiled_partials, tpl_path): get_tpl_from_file(ctx, 0, tpl_path);
+    wsr_tpl_t* template = ctx->cfg.precompile_tpls? get_compiled_tpl(ctx->precompiled_partials, tpl_path): get_tpl_from_file(ctx, 0, tpl_path);
     dict(html_t*)* inlines = new_dict(html_t*);
     tpl_execute(ctx, template, partials, inlines, jdata, buf, tpl_path);
 }
@@ -757,7 +905,7 @@ void wsr_tpl_writev(rio_t* write_h, html_t* html) {
 }
 
 static void compile_templates_at(wsr_tpl_ctx_t* ctx, fstr_t tpl_rel_path) { sub_heap_txn(heap){
-    fstr_t abs_path = concs(ctx->root_tpl_path, tpl_rel_path);
+    fstr_t abs_path = concs(ctx->cfg.root_tpl_path, tpl_rel_path);
     rio_stat_t p_stat = rio_file_lstat(abs_path);
     switch(p_stat.file_type) {{
     } case rio_file_type_directory: {
@@ -779,11 +927,12 @@ static void compile_templates_at(wsr_tpl_ctx_t* ctx, fstr_t tpl_rel_path) { sub_
     }}
 }}
 
-wsr_tpl_ctx_t* wsr_tpl_init(fstr_t root_tpl_path, bool precompile) {
+wsr_tpl_ctx_t* wsr_tpl_init(wsr_tpl_cfg_t* tpl_cfg) {
     wsr_tpl_ctx_t* ctx = new(wsr_tpl_ctx_t);
-    ctx->root_tpl_path = fsc(root_tpl_path);
-    ctx->precompile = precompile;
-    if (precompile) {
+    ctx->cfg.root_tpl_path = fsc(tpl_cfg->root_tpl_path);
+    ctx->cfg.precompile_tpls = tpl_cfg->precompile_tpls;
+    ctx->cfg.clean_tpls = tpl_cfg->clean_tpls;
+    if (tpl_cfg->precompile_tpls) {
         ctx->precompiled_partials = new_dict(wsr_tpl_t*);
         compile_templates_at(ctx, "");
     }

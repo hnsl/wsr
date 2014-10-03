@@ -19,12 +19,16 @@
 
 typedef struct html html_t;
 
-typedef struct wsr_tpl_ctx {
+typedef struct wsr_tpl_cfg {
+    /// Root path where templates are located.
     fstr_t root_tpl_path;
-    bool strict;
-    bool precompile;
-    dict(wsr_tpl_t*)* precompiled_partials;
-} wsr_tpl_ctx_t;
+    /// Precompile all templates in init time.
+    bool precompile_tpls;
+    /// Clean whitespace and comments from templates when reading them.
+    bool clean_tpls;
+} wsr_tpl_cfg_t;
+
+typedef struct wsr_tpl_ctx wsr_tpl_ctx_t;
 
 dict(html_t);
 
@@ -51,6 +55,6 @@ size_t wsr_tpl_length(html_t* html);
 /// afterwards.
 void wsr_tpl_writev(rio_t* write_h, html_t* html);
 
-wsr_tpl_ctx_t* wsr_tpl_init(fstr_t root_tpl_path, bool precompile);
+wsr_tpl_ctx_t* wsr_tpl_init(wsr_tpl_cfg_t* tpl_cfg);
 
 #endif	/* WSR_TPL_H */
