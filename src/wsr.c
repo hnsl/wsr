@@ -329,7 +329,7 @@ static fstr_mem_t* serialize_set_cookie(wsr_set_cookie_t set_cookie) {
     if (delete_cookie || set_cookie.expires > 0) {
         uint128_t expires = (delete_cookie? 0: set_cookie.expires);
         list_push_end(header_parts, fstr_t, "; Expires=");
-        list_push_end(header_parts, fstr_t, fss(rio_clock_to_rfc1123(expires)));
+        list_push_end(header_parts, fstr_t, fss(rio_clock_to_rfc1123(rio_epoch_clock_time(expires))));
     }
     if (set_cookie.secure)
         list_push_end(header_parts, fstr_t, "; Secure");
@@ -524,7 +524,7 @@ static wss_cb_arg_t http_session(rio_t* client_h, wsr_cfg_t cfg, rio_in_addr4_t 
                 has_body = (rsp->body_blob.len > 0);
             }
             list_push_end(raw_headers, fstr_t, "server: wsr/" WSR_VERSION);
-            list_push_end(raw_headers, fstr_t, concs("date: ", fss(rio_clock_to_rfc1123(rio_get_time_clock()))));
+            list_push_end(raw_headers, fstr_t, concs("date: ", fss(rio_clock_to_rfc1123(rio_epoch_clock_time(rio_get_time_clock())))));
             list_push_end(raw_headers, fstr_t, "connection: keep-alive");
             list_push_end(raw_headers, fstr_t, "\r\n");
             fstr_t raw_header = fss(fstr_implode(raw_headers, "\r\n"));
