@@ -524,7 +524,7 @@ static wss_cb_arg_t http_session(rio_t* client_h, wsr_cfg_t cfg, rio_in_addr4_t 
                 has_body = (rsp->body_blob.len > 0);
             }
             list_push_end(raw_headers, fstr_t, "server: wsr/" WSR_VERSION);
-            list_push_end(raw_headers, fstr_t, concs("date: ", fss(rio_clock_to_rfc1123(rio_epoch_to_clock_time(rio_get_time_clock())))));
+            list_push_end(raw_headers, fstr_t, concs("date: ", fss(rio_clock_to_rfc1123(rio_epoch_to_clock_time(rio_epoch_ns_now())))));
             list_push_end(raw_headers, fstr_t, "connection: keep-alive");
             list_push_end(raw_headers, fstr_t, "\r\n");
             fstr_t raw_header = fss(fstr_implode(raw_headers, "\r\n"));
