@@ -18,6 +18,7 @@ typedef enum wsr_elem_type {
     WSR_ELEM_PARTIAL,
     WSR_ELEM_INLINE,
     WSR_ELEM_PRINT,
+    WSR_ELEM_PRINT_RAW,
     WSR_ELEM_IF,
     WSR_ELEM_FOREACH,
 } wsr_elem_type_t;
@@ -239,10 +240,19 @@ static void inner_compile_tpl(wsr_tpl_ctx_t* ctx, dict(wsr_tpl_t*)* partials, fs
             list_push_end(parts, tpl_part_t, part);
         // Dynamic jdata reference.
         } else if (fstr_prefixes(tpl_tag, "@")) {
-            tpl_part_t part = {
-                .type = WSR_ELEM_PRINT,
-                .jkey_get = fstr_trim(fstr_slice(tpl_tag, 1, -1)),
-            };
+            tpl_part_t part;
+            fstr_t raw_suffix = "|raw";
+            if (fstr_suffixes(tpl_tag, raw_suffix)) {
+                part = (tpl_part_t) {
+                    .type = WSR_ELEM_PRINT_RAW,
+                    .jkey_get = fstr_trim(fstr_slice(tpl_tag, 1, (raw_suffix.len + 1) * -1)),
+                };
+            } else {
+                part = (tpl_part_t) {
+                    .type = WSR_ELEM_PRINT,
+                    .jkey_get = fstr_trim(fstr_slice(tpl_tag, 1, -1)),
+                };
+            }
             list_push_end(parts, tpl_part_t, part);
         // Include file as element.
         } else if (fstr_prefixes(tpl_tag, "/")) {
@@ -474,7 +484,8 @@ static void inner_compile_tpl(wsr_tpl_ctx_t* ctx, dict(wsr_tpl_t*)* partials, fs
                 };
                 list_push_end(elems, wsr_elem_t, elem);
                 break;
-            } case WSR_ELEM_PRINT: {
+            } case WSR_ELEM_PRINT: { // fall through
+            } case WSR_ELEM_PRINT_RAW: {
                 wsr_elem_t elem = {
                     .type = part.type,
                     .jkey_get = part.jkey_get,
@@ -632,6 +643,12 @@ static void tpl_execute(wsr_tpl_ctx_t* ctx, wsr_tpl_t* tpl, dict(html_t*)* parti
                 html_append(fss(fstr_from_double(value.number_value)), buf);
             } else if (value.type != JSON_NULL) {
                 html_append(json_serial_type(value.type), buf);
+            }
+            break;
+        } case WSR_ELEM_PRINT_RAW: {
+            json_value_t value = jdata_get(jdata, elem.jkey_get);
+            if (value.type == JSON_STRING) {
+                tpl_append_html(wsr_html_raw(value.string_value), buf);
             }
             break;
         } case WSR_ELEM_IF: {
