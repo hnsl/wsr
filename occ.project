@@ -4,7 +4,7 @@
     "project-linker": "rcd-pl",
     "library": "static",
     "dependencies": [
-        "librcd"
+        {"uri": "git@github.com:jumpstarter-io/librcd.git"}
     ],
     "general-flags": [
         "-g",
