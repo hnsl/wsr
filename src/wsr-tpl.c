@@ -32,6 +32,8 @@ typedef struct wsr_elem {
     fstr_t jkey_get;
     fstr_t jkey_setk;
     fstr_t jkey_setv;
+    bool has_cmp;
+    json_value_t cmp_v;
 } wsr_elem_t;
 
 typedef struct wsr_tpl {
@@ -170,6 +172,8 @@ typedef struct tpl_part {
     fstr_t jkey_get;
     fstr_t jkey_setk;
     fstr_t jkey_setv;
+    bool has_cmp;
+    json_value_t cmp_v;
     struct virt_tpl* virt_tpl;
     struct virt_tpl* virt_tpl2;
 } tpl_part_t;
@@ -206,6 +210,8 @@ static void inner_compile_tpl(wsr_tpl_ctx_t* ctx, dict(wsr_tpl_t*)* partials, fs
             struct {
                 fstr_t partial_key;
                 fstr_t jkey_get;
+                bool has_cmp;
+                json_value_t cmp_v;
                 list(tpl_part_t)* prev_parts;
                 struct virt_tpl* pre_else_vt;
             } ife;
@@ -338,11 +344,28 @@ static void inner_compile_tpl(wsr_tpl_ctx_t* ctx, dict(wsr_tpl_t*)* partials, fs
             fstr_t if_args;
             fstr_divide(tpl_tag, "if:", 0, &if_args);
             stack_elem_t se = {.class = STACKED_IF, .ife.pre_else_vt = 0};
-            fstr_t ns_hint = fstr_slice(if_args, 0, 1);
+            fstr_t var_arg, cmp_arg;
+            if (fstr_divide(if_args, ":", &var_arg, &cmp_arg)) {
+                // Have if comparision argument. This should be a json literal.
+                se.ife.has_cmp = true;
+                try {
+                    se.ife.cmp_v = json_parse(cmp_arg)->value;
+                } catch_eio (json_parse, e, ev) {
+                    throw_eio_fwd(concs("failed to parse if cmp expr [", cmp_arg, "]"), wsr_tpl_invalid, e);
+                }
+                if (se.ife.cmp_v.type == JSON_ARRAY || se.ife.cmp_v.type == JSON_OBJECT)
+                    throw_eio("comparing with array or object type is unsupported", wsr_tpl_invalid);
+            } else {
+                se.ife.has_cmp = false;
+                var_arg = if_args;
+            }
+            fstr_t ns_hint = fstr_slice(var_arg, 0, 1);
             if (fstr_equal(ns_hint, "$")) {
-                se.ife.partial_key = fstr_slice(if_args, 1, -1);
+                se.ife.partial_key = fstr_slice(var_arg, 1, -1);
+                if (se.ife.has_cmp)
+                    throw_eio("comparing partials with literal value is unsupported", wsr_tpl_invalid);
             } else if (fstr_equal(ns_hint, "@")) {
-                se.ife.jkey_get = fstr_slice(if_args, 1, -1);
+                se.ife.jkey_get = fstr_slice(var_arg, 1, -1);
             } else {
                 throw_eio(concs("missing ns hint in if expr [", tpl_tag, "]"), wsr_tpl_invalid);
             }
@@ -379,6 +402,8 @@ static void inner_compile_tpl(wsr_tpl_ctx_t* ctx, dict(wsr_tpl_t*)* partials, fs
                     .type = WSR_ELEM_IF,
                     .partial_key = se.ife.partial_key,
                     .jkey_get = se.ife.jkey_get,
+                    .has_cmp = se.ife.has_cmp,
+                    .cmp_v = se.ife.cmp_v,
                     .virt_tpl = (se.ife.pre_else_vt != 0? se.ife.pre_else_vt: v_tpl),
                     .virt_tpl2 = (se.ife.pre_else_vt != 0? v_tpl: 0),
                 };
@@ -508,7 +533,11 @@ static void inner_compile_tpl(wsr_tpl_ctx_t* ctx, dict(wsr_tpl_t*)* partials, fs
                     .tpl_else = r_tpl_else,
                     .partial_key = part.partial_key,
                     .jkey_get = part.jkey_get,
+                    .has_cmp = part.has_cmp,
                 };
+                if (elem.has_cmp) switch_heap(heap) {
+                    elem.cmp_v = json_clone(part.cmp_v, true);
+                }
                 list_push_end(elems, wsr_elem_t, elem);
                 break;
             } case WSR_ELEM_FOREACH: {
@@ -655,9 +684,11 @@ static void tpl_execute(wsr_tpl_ctx_t* ctx, wsr_tpl_t* tpl, dict(html_t*)* parti
             bool truthy;
             if (elem.partial_key.len > 0) {
                 html_t** partial = dict_read(partials, html_t*, elem.partial_key);
+                assert(!elem.has_cmp);
                 truthy = (partial != 0 && partial_has_content(*partial));
             } else {
-                truthy = !json_is_empty(jdata_get(jdata, elem.jkey_get));
+                json_value_t jv = jdata_get(jdata, elem.jkey_get);
+                truthy = elem.has_cmp? json_cmp(jv, elem.cmp_v): !json_is_empty(jv);
             }
             if (truthy) {
                 tpl_execute(ctx, elem.tpl, partials, inlines, jdata, buf, tpl_path);
