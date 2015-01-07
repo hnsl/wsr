@@ -1,0 +1,28 @@
+{
+    "preprocessor": "rcd-pp",
+    "compiler": "rcd-i2o",
+    "project-linker": "rcd-pl",
+    "library": "static",
+    "dependencies": [
+        {"uri": "git@github.com:jumpstarter-io/librcd.git#origin/ftr-git"}
+    ],
+    "general-flags": [
+        "-g",
+        "-Werror"
+    ],
+    "build-masks": {
+        "debug": {
+            "output": "wsr.debug.a",
+            "pp-flags": [
+                "-DDEBUG"
+            ]
+        },
+        "release": {
+            "output": "wsr.a",
+            "o-flags": ["-O1"],
+            "o-env": {
+                "LLC_ARGS": "-O1"
+            }
+        }
+    }
+}
