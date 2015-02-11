@@ -615,11 +615,11 @@ static html_t* new_inline_buf(dict(html_t*)* inlines, fstr_t partial_key) {
 
 static json_value_t jdata_get(json_value_t jdata, fstr_t jkey) {
     if (jkey.len == 0)
-        return json_null_v;
+        return jnull;
     for (fstr_t jkey_part; fstr_iterate_trim(&jkey, ".", &jkey_part);) {
         jdata = JSON_LREF(jdata, jkey_part);
         if (jdata.type == JSON_NULL)
-            return json_null_v;
+            return jnull;
     }
     return jdata;
 }
@@ -705,7 +705,7 @@ static void tpl_execute(wsr_tpl_ctx_t* ctx, wsr_tpl_t* tpl, dict(html_t*)* parti
                 }
             } else if (value.type == JSON_OBJECT) {
                 dict_foreach(value.object_value, json_value_t, key, value) {
-                    jdata_put(jdata, elem.jkey_setk, json_string_v(key));
+                    jdata_put(jdata, elem.jkey_setk, jstr(key));
                     jdata_put(jdata, elem.jkey_setv, value);
                     tpl_execute(ctx, elem.tpl, partials, inlines, jdata, buf, tpl_path);
                 }
@@ -723,7 +723,7 @@ void wsr_tpl_render_jd(wsr_tpl_ctx_t* ctx, fstr_t tpl_path, dict(html_t*)* parti
 }
 
 void wsr_tpl_render(wsr_tpl_ctx_t* ctx, fstr_t tpl_path, dict(html_t*)* partials, html_t* buf) {
-    wsr_tpl_render_jd(ctx, tpl_path, partials, json_null_v, buf);
+    wsr_tpl_render_jd(ctx, tpl_path, partials, jnull, buf);
 }
 
 html_t* wsr_tpl_start() {
