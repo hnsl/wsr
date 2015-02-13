@@ -46,6 +46,8 @@ html_t* wsr_tpl_start();
 
 size_t wsr_tpl_length(html_t* html);
 
+fstr_mem_t* wsr_tpl_dump(html_t* html);
+
 /// Writes all html to the specified file or socket with direct writev(2) call.
 /// The html structure is destroyed by the call and should not be used
 /// afterwards.

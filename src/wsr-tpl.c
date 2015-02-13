@@ -742,6 +742,16 @@ size_t wsr_tpl_length(html_t* html) {
     return len;
 }
 
+fstr_mem_t* wsr_tpl_dump(html_t* html) {
+    fstr_mem_t* mem = fstr_alloc(wsr_tpl_length(html));
+    fstr_t tail_buf = fss(mem);
+    for (size_t i = 0; i < html->n_total; i++) {
+        fstr_t str = {.str = html->iov[i].iov_base, .len = html->iov[i].iov_len};
+        fstr_cpy_over(tail_buf, str, &tail_buf, 0);
+    }
+    return mem;
+}
+
 static inline fstr_t flush_tail_buf(rio_t* write_h, fstr_t buf, fstr_t buf_tail) {
     fstr_t chunk = fstr_detail(buf, buf_tail);
     if (chunk.len > 0)
