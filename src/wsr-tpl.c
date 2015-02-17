@@ -161,7 +161,7 @@ static fstr_mem_t* read_tpl_file(wsr_tpl_ctx_t* ctx, fstr_t filename) {
 }
 
 static void throw_invalid_tag(fstr_t tpl_id, fstr_t tpl_tag) {
-    throw_eio(concs("template [,", tpl_id, "] contains invalid <{", tpl_tag, "}>"), wsr_tpl_invalid);
+    throw_eio(concs("template [,", tpl_id, "] contains invalid \"{", tpl_tag, "}\""), wsr_tpl_invalid);
 }
 
 typedef struct tpl_part {
@@ -226,7 +226,16 @@ static void inner_compile_tpl(wsr_tpl_ctx_t* ctx, dict(wsr_tpl_t*)* partials, fs
     // First parse out all wsr-tpl tags so we can tell if this is a wrapper.
     list(tpl_part_t)* parts = new_list(tpl_part_t);
     list(virt_tpl_t*)* v_templates = new_list(virt_tpl_t*);
-    for (fstr_t tpl = fss(raw_tpl_mem), html; fstr_iterate(&tpl, "<{", &html);) {
+    for (fstr_t tpl = fss(raw_tpl_mem);;) {
+        fstr_t html, tpl_tag;
+        {
+            fstr_t tpl_tail = tpl;
+            #pragma re2c(tpl): ^ (.*){html}  \
+                [\{] ([\.!\$@/]+ [^\{\}]+){tpl_tag} [\}] {@m_start_tag}
+            html = tpl_tail;
+            tpl_tag = "";
+            m_start_tag:;
+        }
         if (html.len > 0) {
             tpl_part_t part = {
                 .type = WSR_ELEM_STATIC,
@@ -234,8 +243,7 @@ static void inner_compile_tpl(wsr_tpl_ctx_t* ctx, dict(wsr_tpl_t*)* partials, fs
             };
             list_push_end(parts, tpl_part_t, part);
         }
-        fstr_t tpl_tag;
-        if (!fstr_iterate_trim(&tpl, "}>", &tpl_tag))
+        if (tpl_tag.len == 0)
             break;
         // Dynamic partial reference.
         if (fstr_prefixes(tpl_tag, "$")) {
@@ -268,9 +276,9 @@ static void inner_compile_tpl(wsr_tpl_ctx_t* ctx, dict(wsr_tpl_t*)* partials, fs
             };
             list_push_end(parts, tpl_part_t, part);
         // Begin a new wrapping.
-        } else if (fstr_prefixes(tpl_tag, "wrap:")) {
+        } else if (fstr_prefixes(tpl_tag, ".wrap:")) {
             fstr_t tpl_path;
-            fstr_divide(tpl_tag, "wrap:", 0, &tpl_path);
+            fstr_divide(tpl_tag, ".wrap:", 0, &tpl_path);
             stack_elem_t se = {.class = STACKED_WRAP, .wrap.tpl_path = tpl_path};
             list_push_end(wrapper_stack, stack_elem_t, se);
             tpl_part_t part = {
@@ -292,7 +300,7 @@ static void inner_compile_tpl(wsr_tpl_ctx_t* ctx, dict(wsr_tpl_t*)* partials, fs
             list_push_end(parts, tpl_part_t, part);
         // This template defines a wrapper, we are now done building the
         // header, start building the footer.
-        } else if (fstr_equal(tpl_tag, "wrap_content")) {
+        } else if (fstr_equal(tpl_tag, ".wrap_content")) {
             if (is_wrapper)
                 throw_eio(concs("template [,", tpl_id, "] contains more than one <{wrap_content}>"), wsr_tpl_invalid);
             is_wrapper = true;
@@ -304,9 +312,9 @@ static void inner_compile_tpl(wsr_tpl_ctx_t* ctx, dict(wsr_tpl_t*)* partials, fs
             list_push_end(v_templates, virt_tpl_t*, cln(&header));
             parts = new_list(tpl_part_t);
         // Begin an inline partial.
-        } else if (fstr_prefixes(tpl_tag, "inline:$")) {
+        } else if (fstr_prefixes(tpl_tag, ".inline:$")) {
             fstr_t partial_key;
-            fstr_divide(tpl_tag, "inline:$", 0, &partial_key);
+            fstr_divide(tpl_tag, ".inline:$", 0, &partial_key);
             // Stack new parts context.
             stack_elem_t se = {.class = STACKED_INLINE, .inl.partial_key = partial_key, .inl.prev_parts = parts};
             list_push_end(wrapper_stack, stack_elem_t, se);
@@ -340,9 +348,9 @@ static void inner_compile_tpl(wsr_tpl_ctx_t* ctx, dict(wsr_tpl_t*)* partials, fs
             // colliding inline keys appends and not replaces.
             list_push_start(parts, tpl_part_t, part);
         // Begin an if.
-        } else if (fstr_prefixes(tpl_tag, "if:")) {
+        } else if (fstr_prefixes(tpl_tag, ".if:")) {
             fstr_t if_args;
-            fstr_divide(tpl_tag, "if:", 0, &if_args);
+            fstr_divide(tpl_tag, ".if:", 0, &if_args);
             stack_elem_t se = {.class = STACKED_IF, .ife.pre_else_vt = 0};
             fstr_t var_arg, cmp_arg;
             if (fstr_divide(if_args, ":", &var_arg, &cmp_arg)) {
@@ -374,13 +382,13 @@ static void inner_compile_tpl(wsr_tpl_ctx_t* ctx, dict(wsr_tpl_t*)* partials, fs
             list_push_end(wrapper_stack, stack_elem_t, se);
             parts = new_list(tpl_part_t);
         // Begin an else or end if.
-        } else if (fstr_equal(tpl_tag, "else") || fstr_prefixes(tpl_tag, "!if")) {
+        } else if (fstr_equal(tpl_tag, ".else") || fstr_prefixes(tpl_tag, "!if")) {
             if (list_count(wrapper_stack, stack_elem_t) < 1)
                 throw_invalid_tag(tpl_id, tpl_tag);
             stack_elem_t se = list_pop_end(wrapper_stack, stack_elem_t);
             if (se.class != STACKED_IF)
                 throw_invalid_tag(tpl_id, tpl_tag);
-            bool is_else = fstr_equal(tpl_tag, "else");
+            bool is_else = fstr_equal(tpl_tag, ".else");
             if (is_else && se.ife.pre_else_vt != 0)
                 throw_eio(concs("duplicate else"), wsr_tpl_invalid);
             // Add the if branch as a virtual template.
@@ -410,9 +418,9 @@ static void inner_compile_tpl(wsr_tpl_ctx_t* ctx, dict(wsr_tpl_t*)* partials, fs
                 list_push_end(parts, tpl_part_t, part);
             }
         // Begin a foreach.
-        } else if (fstr_prefixes(tpl_tag, "foreach:@")) {
+        } else if (fstr_prefixes(tpl_tag, ".foreach:@")) {
             fstr_t foreach_args;
-            fstr_divide(tpl_tag, "foreach:@", 0, &foreach_args);
+            fstr_divide(tpl_tag, ".foreach:@", 0, &foreach_args);
             fstr_t jkey_get, jkey_set_args;
             if (!fstr_divide(foreach_args, ":@", &jkey_get, &jkey_set_args))
                 throw_eio(concs("invalid tpl tag foreach syntax [", tpl_tag, "]"), wsr_tpl_invalid);
