@@ -22,6 +22,7 @@ typedef enum wsr_elem_type {
     WSR_ELEM_PRINT_JSON,
     WSR_ELEM_IF,
     WSR_ELEM_FOREACH,
+    WSR_ELEM_CALL,
 } wsr_elem_type_t;
 
 typedef struct wsr_elem {
@@ -36,6 +37,7 @@ typedef struct wsr_elem {
     bool json_encode;
     bool has_cmp;
     json_value_t cmp_v;
+    tpl_cb_t tpl_cb;
 } wsr_elem_t;
 
 typedef struct wsr_tpl {
@@ -162,8 +164,12 @@ static fstr_mem_t* read_tpl_file(wsr_tpl_ctx_t* ctx, fstr_t filename) {
     return rio_read_file_contents(raw_tpl_path);
 }
 
+static void throw_invalid_tag_info(fstr_t tpl_id, fstr_t tpl_tag, fstr_t info) {
+    throw_eio(concs("template [,", tpl_id, "] contains invalid \"{", tpl_tag, "}\"", (info.len > 0? " ": ""), info), wsr_tpl_invalid);
+}
+
 static void throw_invalid_tag(fstr_t tpl_id, fstr_t tpl_tag) {
-    throw_eio(concs("template [,", tpl_id, "] contains invalid \"{", tpl_tag, "}\""), wsr_tpl_invalid);
+    return throw_invalid_tag_info(tpl_id, tpl_tag, "");
 }
 
 typedef struct tpl_part {
@@ -176,6 +182,7 @@ typedef struct tpl_part {
     fstr_t jkey_setv;
     bool has_cmp;
     json_value_t cmp_v;
+    tpl_cb_t tpl_cb;
     struct virt_tpl* virt_tpl;
     struct virt_tpl* virt_tpl2;
 } tpl_part_t;
@@ -471,6 +478,36 @@ static void inner_compile_tpl(wsr_tpl_ctx_t* ctx, dict(wsr_tpl_t*)* partials, fs
                 .virt_tpl = v_tpl,
             };
             list_push_end(parts, tpl_part_t, part);
+        // Begin a template callback request.
+        } else if (fstr_prefixes(tpl_tag, ".call:@")) {
+            fstr_t call_tag_args;
+            fstr_divide(tpl_tag, ".call:@", 0, &call_tag_args);
+            fstr_t result_jkey, call_fn_arg;
+            if (!fstr_divide(call_tag_args, ":", &result_jkey, &call_fn_arg))
+                throw_invalid_tag(tpl_id, tpl_tag);
+            fstr_t call_fn, call_arg;
+            if (!fstr_divide(call_fn_arg, ":", &call_fn, &call_arg))
+                throw_invalid_tag(tpl_id, tpl_tag);
+            // Lookup the callback.
+            tpl_cb_t* tpl_cb = dict_read(ctx->tpl_cbs, tpl_cb_t, call_fn);
+            if (tpl_cb == 0)
+                throw_invalid_tag_info(tpl_id, tpl_tag, concs("no such callback [", call_fn, "] declared"));
+            // Trim whitespace from call arg lines as this is usually useless template indent.
+            list(fstr_t)* trimmed_lines = new_list(fstr_t);
+            for (fstr_t line; fstr_iterate_trim(&call_arg, "\n", &line);)
+                list_push_end(trimmed_lines, fstr_t, line);
+            fstr_t trimmed_call_arg;
+            switch_heap (heap) {
+                trimmed_call_arg = fss(fstr_implode(trimmed_lines, "\n"));
+            }
+            // Add the callback.
+            tpl_part_t part = {
+                .type = WSR_ELEM_CALL,
+                .jkey_get = trimmed_call_arg,
+                .jkey_setk = result_jkey,
+                .tpl_cb = *tpl_cb,
+            };
+            list_push_end(parts, tpl_part_t, part);
         } else {
             throw_eio(concs("did not understand tpl tag [", tpl_tag, "]"), wsr_tpl_invalid);
         }
@@ -569,6 +606,15 @@ static void inner_compile_tpl(wsr_tpl_ctx_t* ctx, dict(wsr_tpl_t*)* partials, fs
                 };
                 list_push_end(elems, wsr_elem_t, elem);
                 break;
+            } case WSR_ELEM_CALL: {
+                wsr_elem_t elem = {
+                    .type = WSR_ELEM_CALL,
+                    .jkey_get = part.jkey_get,
+                    .jkey_setk = part.jkey_setk,
+                    .tpl_cb = part.tpl_cb,
+                };
+                list_push_end(elems, wsr_elem_t, elem);
+                break;
             }}
         }
         switch_heap (heap) {
@@ -630,7 +676,7 @@ static html_t* new_inline_buf(dict(html_t*)* inlines, fstr_t partial_key) {
     }
 }
 
-static json_value_t jdata_get(json_value_t jdata, fstr_t jkey) {
+json_value_t wsr_jdata_get(json_value_t jdata, fstr_t jkey) {
     if (jkey.len == 0)
         return jnull;
     for (fstr_t jkey_part; fstr_iterate_trim(&jkey, ".", &jkey_part);) {
@@ -641,12 +687,12 @@ static json_value_t jdata_get(json_value_t jdata, fstr_t jkey) {
     return jdata;
 }
 
-static void jdata_put(json_value_t jdata, fstr_t jkey, json_value_t val) {
+void wsr_jdata_put(json_value_t jdata, fstr_t jkey, json_value_t val) {
     if (jkey.len == 0)
         return;
     fstr_t g_jkey, s_key;
     if (fstr_rdivide(jkey, ".", &g_jkey, &s_key)) {
-        jdata = jdata_get(jdata, g_jkey);
+        jdata = wsr_jdata_get(jdata, g_jkey);
     } else {
         s_key = jkey;
     }
@@ -663,7 +709,7 @@ static bool partial_has_content(html_t* partial) {
     return false;
 }
 
-static void tpl_execute(wsr_tpl_ctx_t* ctx, wsr_tpl_t* tpl, dict(html_t*)* partials, dict(html_t*)* inlines, json_value_t jdata, html_t* buf, fstr_t tpl_path) {
+static void tpl_execute(wsr_tpl_ctx_t* ctx, wsr_tpl_t* tpl, dict(html_t*)* partials, dict(html_t*)* inlines, json_value_t jdata, html_t* buf, fstr_t tpl_path, void* arg_ptr) {
     for (size_t i = 0; i < tpl->n_elems; i++) {
         wsr_elem_t elem = tpl->elems[i];
         switch (elem.type) {{
@@ -671,7 +717,7 @@ static void tpl_execute(wsr_tpl_ctx_t* ctx, wsr_tpl_t* tpl, dict(html_t*)* parti
             html_append(elem.html, buf);
             break;
         } case WSR_ELEM_INCLUDE: {
-            tpl_execute(ctx, elem.tpl, partials, inlines, jdata, buf, tpl_path);
+            tpl_execute(ctx, elem.tpl, partials, inlines, jdata, buf, tpl_path, arg_ptr);
             break;
         } case WSR_ELEM_PARTIAL: {
             tpl_append_partial(ctx, elem.partial_key, partials, buf);
@@ -679,10 +725,10 @@ static void tpl_execute(wsr_tpl_ctx_t* ctx, wsr_tpl_t* tpl, dict(html_t*)* parti
             break;
         } case WSR_ELEM_INLINE: {
             html_t* inline_buf = new_inline_buf(inlines, elem.partial_key);
-            tpl_execute(ctx, elem.tpl, partials, inlines, jdata, inline_buf, tpl_path);
+            tpl_execute(ctx, elem.tpl, partials, inlines, jdata, inline_buf, tpl_path, arg_ptr);
             break;
         } case WSR_ELEM_PRINT: {
-            json_value_t value = jdata_get(jdata, elem.jkey_get);
+            json_value_t value = wsr_jdata_get(jdata, elem.jkey_get);
             if (value.type == JSON_STRING) {
                 tpl_append_html(wsr_html_escape(value.string_value), buf);
             } else if (value.type == JSON_NUMBER) {
@@ -692,11 +738,11 @@ static void tpl_execute(wsr_tpl_ctx_t* ctx, wsr_tpl_t* tpl, dict(html_t*)* parti
             }
             break;
         } case WSR_ELEM_PRINT_JSON: {
-            json_value_t value = jdata_get(jdata, elem.jkey_get);
+            json_value_t value = wsr_jdata_get(jdata, elem.jkey_get);
             tpl_append_html(wsr_html_escape(fss(json_stringify(value))), buf);
             break;
         } case WSR_ELEM_PRINT_RAW: {
-            json_value_t value = jdata_get(jdata, elem.jkey_get);
+            json_value_t value = wsr_jdata_get(jdata, elem.jkey_get);
             if (value.type == JSON_STRING) {
                 tpl_append_html(wsr_html_raw(value.string_value), buf);
             }
@@ -708,43 +754,48 @@ static void tpl_execute(wsr_tpl_ctx_t* ctx, wsr_tpl_t* tpl, dict(html_t*)* parti
                 assert(!elem.has_cmp);
                 truthy = (partial != 0 && partial_has_content(*partial));
             } else {
-                json_value_t jv = jdata_get(jdata, elem.jkey_get);
+                json_value_t jv = wsr_jdata_get(jdata, elem.jkey_get);
                 truthy = elem.has_cmp? json_cmp(jv, elem.cmp_v): !json_is_empty(jv);
             }
             if (truthy) {
-                tpl_execute(ctx, elem.tpl, partials, inlines, jdata, buf, tpl_path);
+                tpl_execute(ctx, elem.tpl, partials, inlines, jdata, buf, tpl_path, arg_ptr);
             } else if (elem.tpl_else != 0) {
-                tpl_execute(ctx, elem.tpl_else, partials, inlines, jdata, buf, tpl_path);
+                tpl_execute(ctx, elem.tpl_else, partials, inlines, jdata, buf, tpl_path, arg_ptr);
             }
             break;
         } case WSR_ELEM_FOREACH: {
-            json_value_t value = jdata_get(jdata, elem.jkey_get);
+            json_value_t value = wsr_jdata_get(jdata, elem.jkey_get);
             if (value.type == JSON_ARRAY) {
                 list_foreach(value.array_value, json_value_t, value) {
-                    jdata_put(jdata, elem.jkey_setv, value);
-                    tpl_execute(ctx, elem.tpl, partials, inlines, jdata, buf, tpl_path);
+                    wsr_jdata_put(jdata, elem.jkey_setv, value);
+                    tpl_execute(ctx, elem.tpl, partials, inlines, jdata, buf, tpl_path, arg_ptr);
                 }
             } else if (value.type == JSON_OBJECT) {
                 dict_foreach(value.object_value, json_value_t, key, value) {
-                    jdata_put(jdata, elem.jkey_setk, jstr(key));
-                    jdata_put(jdata, elem.jkey_setv, value);
-                    tpl_execute(ctx, elem.tpl, partials, inlines, jdata, buf, tpl_path);
+                    wsr_jdata_put(jdata, elem.jkey_setk, jstr(key));
+                    wsr_jdata_put(jdata, elem.jkey_setv, value);
+                    tpl_execute(ctx, elem.tpl, partials, inlines, jdata, buf, tpl_path, arg_ptr);
                 }
             }
+            break;
+        } case WSR_ELEM_CALL: {
+            DBGFN("has wsr call [", elem.jkey_setk, "] [", elem.jkey_get, "] [", arg_ptr, "]");
+            json_value_t value = elem.tpl_cb(elem.jkey_get, jdata, arg_ptr);
+            wsr_jdata_put(jdata, elem.jkey_setk, value);
             break;
         }}
     }
 }
 
-void wsr_tpl_render_jd(wsr_tpl_ctx_t* ctx, fstr_t tpl_path, dict(html_t*)* partials, json_value_t jdata, html_t* buf) {
+void wsr_tpl_render_jd(wsr_tpl_ctx_t* ctx, fstr_t tpl_path, dict(html_t*)* partials, json_value_t jdata, html_t* buf, void* arg_ptr) {
     DBGFN("[", tpl_path, "]: ", jdata);
     wsr_tpl_t* template = ctx->precompile? get_compiled_tpl(ctx->precompiled_partials, tpl_path): get_tpl_from_file(ctx, 0, tpl_path);
     dict(html_t*)* inlines = new_dict(html_t*);
-    tpl_execute(ctx, template, partials, inlines, jdata, buf, tpl_path);
+    tpl_execute(ctx, template, partials, inlines, jdata, buf, tpl_path, arg_ptr);
 }
 
-void wsr_tpl_render(wsr_tpl_ctx_t* ctx, fstr_t tpl_path, dict(html_t*)* partials, html_t* buf) {
-    wsr_tpl_render_jd(ctx, tpl_path, partials, jnull, buf);
+void wsr_tpl_render(wsr_tpl_ctx_t* ctx, fstr_t tpl_path, dict(html_t*)* partials, html_t* buf, void* arg_ptr) {
+    wsr_tpl_render_jd(ctx, tpl_path, partials, jnull, buf, arg_ptr);
 }
 
 html_t* wsr_tpl_start() {
@@ -858,10 +909,11 @@ static void compile_templates_at(wsr_tpl_ctx_t* ctx, fstr_t tpl_rel_path) { sub_
     }}
 }}
 
-wsr_tpl_ctx_t* wsr_tpl_init(fstr_t root_tpl_path, bool precompile) {
+wsr_tpl_ctx_t* wsr_tpl_init(fstr_t root_tpl_path, bool precompile, dict(tpl_cb_t)* tpl_cbs) {
     wsr_tpl_ctx_t* ctx = new(wsr_tpl_ctx_t);
     ctx->root_tpl_path = fsc(root_tpl_path);
     ctx->precompile = precompile;
+    ctx->tpl_cbs = tpl_cbs;
     if (precompile) {
         ctx->precompiled_partials = new_dict(wsr_tpl_t*);
         compile_templates_at(ctx, "");

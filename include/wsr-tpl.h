@@ -19,16 +19,21 @@
 
 typedef struct html html_t;
 
+typedef json_value_t (*tpl_cb_t)(fstr_t tpl_arg, json_value_t jdata, void* arg_ptr);
+
 typedef struct wsr_tpl_ctx {
     fstr_t root_tpl_path;
     bool strict;
     bool precompile;
     dict(wsr_tpl_t*)* precompiled_partials;
+    dict(tpl_cb_t)* tpl_cbs;
 } wsr_tpl_ctx_t;
 
 dict(html_t);
 
 list(html_t);
+
+dict(tpl_cb_t);
 
 html_t* wsr_html_raw(fstr_t raw_html);
 
@@ -38,9 +43,13 @@ html_t* wsr_html_implode(list(html_t*)* htmls);
 
 html_t* wsr_html_escape(fstr_t str);
 
-void wsr_tpl_render_jd(wsr_tpl_ctx_t* ctx, fstr_t tpl_path, dict(html_t*)* partials, json_value_t jdata, html_t* buf);
+json_value_t wsr_jdata_get(json_value_t jdata, fstr_t jkey);
 
-void wsr_tpl_render(wsr_tpl_ctx_t* ctx, fstr_t tpl_path, dict(html_t*)* partials, html_t* buf);
+void wsr_jdata_put(json_value_t jdata, fstr_t jkey, json_value_t val);
+
+void wsr_tpl_render_jd(wsr_tpl_ctx_t* ctx, fstr_t tpl_path, dict(html_t*)* partials, json_value_t jdata, html_t* buf, void* arg_ptr);
+
+void wsr_tpl_render(wsr_tpl_ctx_t* ctx, fstr_t tpl_path, dict(html_t*)* partials, html_t* buf, void* arg_ptr);
 
 html_t* wsr_tpl_start();
 
@@ -53,6 +62,6 @@ fstr_mem_t* wsr_tpl_dump(html_t* html);
 /// afterwards.
 void wsr_tpl_writev(rio_t* write_h, html_t* html);
 
-wsr_tpl_ctx_t* wsr_tpl_init(fstr_t root_tpl_path, bool precompile);
+wsr_tpl_ctx_t* wsr_tpl_init(fstr_t root_tpl_path, bool precompile, dict(tpl_cb_t)* tpl_cbs);
 
 #endif	/* WSR_TPL_H */
