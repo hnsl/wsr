@@ -240,7 +240,7 @@ static void inner_compile_tpl(wsr_tpl_ctx_t* ctx, dict(wsr_tpl_t*)* partials, fs
         {
             fstr_t tpl_tail = tpl;
             #pragma re2c(tpl): ^ (.*){html}  \
-                [\{] ([\.!\$@/]+ [^\{\}]+){tpl_tag} [\}] {@m_start_tag}
+                [\{] ([\.!\$@/#]+ [^\{\}]+){tpl_tag} [\}] {@m_start_tag}
             html = tpl_tail;
             tpl_tag = "";
             m_start_tag:;
@@ -254,8 +254,11 @@ static void inner_compile_tpl(wsr_tpl_ctx_t* ctx, dict(wsr_tpl_t*)* partials, fs
         }
         if (tpl_tag.len == 0)
             break;
+        // Comment.
+        if (fstr_prefixes(tpl_tag, "#")) {
+            continue;
         // Dynamic partial reference.
-        if (fstr_prefixes(tpl_tag, "$")) {
+        } else if (fstr_prefixes(tpl_tag, "$")) {
             tpl_part_t part = {
                 .type = WSR_ELEM_PARTIAL,
                 .partial_key = fstr_trim(fstr_slice(tpl_tag, 1, -1)),
