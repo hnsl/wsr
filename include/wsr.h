@@ -37,6 +37,8 @@ typedef struct wsr_req {
     wsr_method_t method;
     /// Path of request.
     fstr_t path;
+    /// Raw unparsed path of request.
+    fstr_t raw_path;
     /// Requests headers. All keys are trimmed and lowercased. All values are trimmed.
     dict(fstr_t)* headers;
     /// Parsed url parameters of request.
