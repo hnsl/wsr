@@ -268,13 +268,14 @@ static void inner_compile_tpl(wsr_tpl_ctx_t* ctx, dict(wsr_tpl_t*)* partials, fs
         } else if (fstr_prefixes(tpl_tag, "@")) {
             tpl_part_t part;
             fstr_t raw_suffix = "|raw";
-            fstr_t json_suffix = "|json";
+            fstr_t json_suffix = "|script-json";
             if (fstr_suffixes(tpl_tag, raw_suffix)) {
                 part = (tpl_part_t) {
                     .type = WSR_ELEM_PRINT_RAW,
                     .jkey_get = fstr_trim(fstr_slice(tpl_tag, 1, -raw_suffix.len - 1)),
                 };
             } else if (fstr_suffixes(tpl_tag, json_suffix)) {
+                // JSON that is only safe to use inside <script> tags.
                 part = (tpl_part_t) {
                     .type = WSR_ELEM_PRINT_JSON,
                     .jkey_get = fstr_trim(fstr_slice(tpl_tag, 1, -json_suffix.len - 1)),
@@ -741,8 +742,19 @@ static void tpl_execute(wsr_tpl_ctx_t* ctx, wsr_tpl_t* tpl, dict(html_t*)* parti
             }
             break;
         } case WSR_ELEM_PRINT_JSON: {
+            // Print json value for use inside <script> tag.
             json_value_t value = wsr_jdata_get(jdata, elem.jkey_get);
-            tpl_append_html(wsr_html_escape(fss(json_stringify(value))), buf);
+            fstr_t script_json;
+            sub_heap {
+                fstr_t raw_json = fss(json_stringify(value));
+                // In HTML <script> tags is parsed as CDATA:
+                // http://www.w3.org/TR/REC-html40/types.html#type-cdata
+                // The only way to escape this parsing from JSON is to use the
+                // "</" (end-tag open delimiter).
+                // We only need to escape instances of it to ensure that we're XSS proof.
+                script_json = fss(escape(fstr_replace(raw_json, "</", "<\\/")));
+            }
+            tpl_append_html(HRAW(script_json), buf);
             break;
         } case WSR_ELEM_PRINT_RAW: {
             json_value_t value = wsr_jdata_get(jdata, elem.jkey_get);
