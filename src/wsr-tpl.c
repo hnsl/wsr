@@ -137,6 +137,44 @@ html_t* wsr_html_escape(fstr_t str) {
     return buf;
 }
 
+/// Takes raw json and encodes it as "script json", i.e. json that is safe to
+/// print in a <script> tag without affecting HTML5 parsing while preserving
+/// the exact semantic meaning of the JSON expression in javascript.
+fstr_mem_t* wsr_json_script_escape(fstr_t raw_json) { sub_heap {
+    list(fstr_t)* toks = new_list(fstr_t);
+    for (;;) {
+        fstr_t ok_json, replace;
+        do {{
+            fstr_t json_left = raw_json;
+            #pragma re2c(raw_json): \
+                  ^ (.*) {ok_json} </ {@esacpe_script} \
+                | ^ (.*) {ok_json} <! {@data_double_escape} \
+                | ^ (.*) {ok_json} -> {@escape_comment}
+            ok_json = json_left;
+            replace = "";
+            break;
+        } esacpe_script: {
+            // Stops escaping the <script> tag.
+            replace = "<\\/";
+            break;
+        } data_double_escape: {
+            // Stops escaping the <script> tag using the obscure HTML "script data double escaped state".
+            replace = "<\\!";
+            break;
+        } escape_comment: {
+            // Stops escaping the script if it's <!-- commented out -->.
+            replace = "-\\>";
+            break;
+        }} while (false);
+        DBGFN("[", ok_json, "] [", replace, "]");
+        list_push_end(toks, fstr_t, ok_json);
+        if (replace.len == 0)
+            break;
+        list_push_end(toks, fstr_t, replace);
+    }
+    return escape(fstr_implode(toks, ""));
+}}
+
 static wsr_tpl_t* get_compiled_tpl(dict(wsr_tpl_t*)* partials, fstr_t tpl_path) {
     wsr_tpl_t** tpl_ptr = dict_read(partials, wsr_tpl_t*, tpl_path);
     if (tpl_ptr == 0)
@@ -747,12 +785,7 @@ static void tpl_execute(wsr_tpl_ctx_t* ctx, wsr_tpl_t* tpl, dict(html_t*)* parti
             fstr_t script_json;
             sub_heap {
                 fstr_t raw_json = fss(json_stringify(value));
-                // In HTML <script> tags is parsed as CDATA:
-                // http://www.w3.org/TR/REC-html40/types.html#type-cdata
-                // The only way to escape this parsing from JSON is to use the
-                // "</" (end-tag open delimiter).
-                // We only need to escape instances of it to ensure that we're XSS proof.
-                script_json = fss(escape(fstr_replace(raw_json, "</", "<\\/")));
+                script_json = fss(escape(wsr_json_script_escape(raw_json)));
             }
             tpl_append_html(HRAW(script_json), buf);
             break;

@@ -43,6 +43,8 @@ html_t* wsr_html_implode(list(html_t*)* htmls);
 
 html_t* wsr_html_escape(fstr_t str);
 
+fstr_mem_t* wsr_json_script_escape(fstr_t raw_json);
+
 json_value_t wsr_jdata_get(json_value_t jdata, fstr_t jkey);
 
 void wsr_jdata_put(json_value_t jdata, fstr_t jkey, json_value_t val);
