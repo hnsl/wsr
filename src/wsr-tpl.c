@@ -179,7 +179,6 @@ fstr_mem_t* wsr_json_script_escape(fstr_t raw_json) { sub_heap {
             replace = "\\u2029";
             break;
         }} while (false);
-        DBGFN("[", ok_json, "] [", replace, "]");
         list_push_end(toks, fstr_t, ok_json);
         if (replace.len == 0)
             break;
