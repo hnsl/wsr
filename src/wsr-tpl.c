@@ -138,22 +138,27 @@ html_t* wsr_html_escape(fstr_t str) {
 }
 
 /// Takes raw json and encodes it as "script json", i.e. json that is safe to
-/// print in a <script> tag without affecting HTML5 parsing while preserving
-/// the exact semantic meaning of the JSON expression in javascript.
+/// print in a <script> tag anywhere generating a single unambiguous expression
+/// that is valid Javascript affecting HTML5 parsing while preserving the exact
+/// semantic meaning of the JSON expression in Javascript.
+/// This also requires the function to escape certain Unicode characters that are
+/// valid in JSON but not valid in Javascript.
 fstr_mem_t* wsr_json_script_escape(fstr_t raw_json) { sub_heap {
-    list(fstr_t)* toks = new_list(fstr_t);
+    list(fstr_t)* toks = new_list(fstr_t, "(");
     for (;;) {
         fstr_t ok_json, replace;
         do {{
             fstr_t json_left = raw_json;
             #pragma re2c(raw_json): \
-                  ^ (.*) {ok_json} </ {@esacpe_script} \
+                  ^ (.*) {ok_json} </ {@escape_script} \
                 | ^ (.*) {ok_json} <! {@data_double_escape} \
-                | ^ (.*) {ok_json} -> {@escape_comment}
+                | ^ (.*) {ok_json} -> {@escape_comment} \
+                | ^ (.*) {ok_json} [\xe2][\x80][\xa8] {@uc_line_separator} \
+                | ^ (.*) {ok_json} [\xe2][\x80][\xa9] {@uc_paragraph_separator}
             ok_json = json_left;
             replace = "";
             break;
-        } esacpe_script: {
+        } escape_script: {
             // Stops escaping the <script> tag.
             replace = "<\\/";
             break;
@@ -165,6 +170,14 @@ fstr_mem_t* wsr_json_script_escape(fstr_t raw_json) { sub_heap {
             // Stops escaping the script if it's <!-- commented out -->.
             replace = "-\\>";
             break;
+        } uc_line_separator: {
+            // The "line separator" (U+2028) character is not valid Javascript.
+            replace = "\\u2028";
+            break;
+        } uc_paragraph_separator: {
+            // The "paragraph separator" (U+2029) character is not valid Javascript.
+            replace = "\\u2029";
+            break;
         }} while (false);
         DBGFN("[", ok_json, "] [", replace, "]");
         list_push_end(toks, fstr_t, ok_json);
@@ -172,6 +185,7 @@ fstr_mem_t* wsr_json_script_escape(fstr_t raw_json) { sub_heap {
             break;
         list_push_end(toks, fstr_t, replace);
     }
+    list_push_end(toks, fstr_t, ")");
     return escape(fstr_implode(toks, ""));
 }}
 
