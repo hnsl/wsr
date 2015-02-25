@@ -938,11 +938,13 @@ dict(fstr_t)* wsr_request_cookies(wsr_req_t* req){
 }
 
 void wsr_response_add_header(wsr_rsp_t* rsp, fstr_t key, fstr_t value) {
-   if (rsp->heap == 0)
-       rsp->heap = lwt_alloc_heap();
-   switch_heap(rsp->heap) {
-       dict_replace(rsp->headers, fstr_t, key, value);
-   }
+    if (rsp->heap == 0)
+        rsp->heap = lwt_alloc_heap();
+    switch_heap(rsp->heap) {
+        if (rsp->headers == 0)
+            rsp->headers = new_dict(fstr_t);
+        dict_replace(rsp->headers, fstr_t, key, value);
+    }
 }
 
 void wsr_response_add_cookie(wsr_rsp_t* rsp, wsr_set_cookie_t set_cookie) {
