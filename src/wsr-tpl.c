@@ -22,6 +22,7 @@ typedef enum wsr_elem_type {
     WSR_ELEM_PRINT_JSON,
     WSR_ELEM_IF,
     WSR_ELEM_FOREACH,
+    WSR_ELEM_SET,
     WSR_ELEM_CALL,
 } wsr_elem_type_t;
 
@@ -35,8 +36,8 @@ typedef struct wsr_elem {
     fstr_t jkey_setk;
     fstr_t jkey_setv;
     bool json_encode;
-    bool has_cmp;
-    json_value_t cmp_v;
+    bool has_jval;
+    json_value_t jval;
     tpl_cb_t tpl_cb;
 } wsr_elem_t;
 
@@ -231,8 +232,8 @@ typedef struct tpl_part {
     fstr_t jkey_get;
     fstr_t jkey_setk;
     fstr_t jkey_setv;
-    bool has_cmp;
-    json_value_t cmp_v;
+    bool has_jval;
+    json_value_t jval;
     tpl_cb_t tpl_cb;
     struct virt_tpl* virt_tpl;
     struct virt_tpl* virt_tpl2;
@@ -270,8 +271,8 @@ static void inner_compile_tpl(wsr_tpl_ctx_t* ctx, dict(wsr_tpl_t*)* partials, fs
             struct {
                 fstr_t partial_key;
                 fstr_t jkey_get;
-                bool has_cmp;
-                json_value_t cmp_v;
+                bool has_jval;
+                json_value_t jval;
                 list(tpl_part_t)* prev_parts;
                 struct virt_tpl* pre_else_vt;
             } ife;
@@ -425,22 +426,22 @@ static void inner_compile_tpl(wsr_tpl_ctx_t* ctx, dict(wsr_tpl_t*)* partials, fs
             fstr_t var_arg, cmp_arg;
             if (fstr_divide(if_args, ":", &var_arg, &cmp_arg)) {
                 // Have if comparision argument. This should be a json literal.
-                se.ife.has_cmp = true;
+                se.ife.has_jval = true;
                 try {
-                    se.ife.cmp_v = json_parse(cmp_arg)->value;
+                    se.ife.jval = json_parse(cmp_arg)->value;
                 } catch_eio (json_parse, e, ev) {
                     throw_eio_fwd(concs("failed to parse if cmp expr [", cmp_arg, "]"), wsr_tpl_invalid, e);
                 }
-                if (se.ife.cmp_v.type == JSON_ARRAY || se.ife.cmp_v.type == JSON_OBJECT)
+                if (se.ife.jval.type == JSON_ARRAY || se.ife.jval.type == JSON_OBJECT)
                     throw_eio("comparing with array or object type is unsupported", wsr_tpl_invalid);
             } else {
-                se.ife.has_cmp = false;
+                se.ife.has_jval = false;
                 var_arg = if_args;
             }
             fstr_t ns_hint = fstr_slice(var_arg, 0, 1);
             if (fstr_equal(ns_hint, "$")) {
                 se.ife.partial_key = fstr_slice(var_arg, 1, -1);
-                if (se.ife.has_cmp)
+                if (se.ife.has_jval)
                     throw_eio("comparing partials with literal value is unsupported", wsr_tpl_invalid);
             } else if (fstr_equal(ns_hint, "@")) {
                 se.ife.jkey_get = fstr_slice(var_arg, 1, -1);
@@ -480,8 +481,8 @@ static void inner_compile_tpl(wsr_tpl_ctx_t* ctx, dict(wsr_tpl_t*)* partials, fs
                     .type = WSR_ELEM_IF,
                     .partial_key = se.ife.partial_key,
                     .jkey_get = se.ife.jkey_get,
-                    .has_cmp = se.ife.has_cmp,
-                    .cmp_v = se.ife.cmp_v,
+                    .has_jval = se.ife.has_jval,
+                    .jval = se.ife.jval,
                     .virt_tpl = (se.ife.pre_else_vt != 0? se.ife.pre_else_vt: v_tpl),
                     .virt_tpl2 = (se.ife.pre_else_vt != 0? v_tpl: 0),
                 };
@@ -533,7 +534,41 @@ static void inner_compile_tpl(wsr_tpl_ctx_t* ctx, dict(wsr_tpl_t*)* partials, fs
                 .virt_tpl = v_tpl,
             };
             list_push_end(parts, tpl_part_t, part);
+        // Begin a template set request.
+        // This statement is useful to pass data into includes which allows
+        // includes to work like functions that render HTML dynamically.
+        } else if (fstr_prefixes(tpl_tag, ".set:@")) {
+            fstr_t set_tag_args;
+            fstr_divide(tpl_tag, ".set:@", 0, &set_tag_args);
+            fstr_t jkey_setk, getv;
+            if (!fstr_divide(set_tag_args, ":", &jkey_setk, &getv))
+                throw_invalid_tag(tpl_id, tpl_tag);
+            bool has_jval;
+            fstr_t jkey_get;
+            json_value_t jval;
+            if (fstr_prefixes(getv, "@")) {
+                has_jval = false;
+                fstr_divide(getv, "@", 0, &jkey_get);
+            } else {
+                has_jval = true;
+                try {
+                    jval = json_parse(getv)->value;
+                } catch_eio (json_parse, e, ev) {
+                    throw_eio_fwd(concs("failed to parse set expr [", getv, "]"), wsr_tpl_invalid, e);
+                }
+            }
+            // Add the callback.
+            tpl_part_t part = {
+                .type = WSR_ELEM_SET,
+                .jkey_get = jkey_get,
+                .jkey_setk = jkey_setk,
+                .has_jval = has_jval,
+                .jval = jval,
+            };
+            list_push_end(parts, tpl_part_t, part);
         // Begin a template callback request.
+        // This statement is useful to allow the template to request the data it
+        // needs to render allowing vastly less context to read and understand them.
         } else if (fstr_prefixes(tpl_tag, ".call:@")) {
             fstr_t call_tag_args;
             fstr_divide(tpl_tag, ".call:@", 0, &call_tag_args);
@@ -642,10 +677,10 @@ static void inner_compile_tpl(wsr_tpl_ctx_t* ctx, dict(wsr_tpl_t*)* partials, fs
                     .tpl_else = r_tpl_else,
                     .partial_key = part.partial_key,
                     .jkey_get = part.jkey_get,
-                    .has_cmp = part.has_cmp,
+                    .has_jval = part.has_jval,
                 };
-                if (elem.has_cmp) switch_heap(heap) {
-                    elem.cmp_v = json_clone(part.cmp_v, true);
+                if (elem.has_jval) switch_heap(heap) {
+                    elem.jval = json_clone(part.jval, true);
                 }
                 list_push_end(elems, wsr_elem_t, elem);
                 break;
@@ -659,6 +694,18 @@ static void inner_compile_tpl(wsr_tpl_ctx_t* ctx, dict(wsr_tpl_t*)* partials, fs
                     .jkey_setk = part.jkey_setk,
                     .jkey_setv = part.jkey_setv,
                 };
+                list_push_end(elems, wsr_elem_t, elem);
+                break;
+            } case WSR_ELEM_SET: {
+                wsr_elem_t elem = {
+                    .type = WSR_ELEM_SET,
+                    .jkey_get = part.jkey_get,
+                    .jkey_setk = part.jkey_setk,
+                    .has_jval = part.has_jval,
+                };
+                if (elem.has_jval) switch_heap(heap) {
+                    elem.jval = json_clone(part.jval, true);
+                }
                 list_push_end(elems, wsr_elem_t, elem);
                 break;
             } case WSR_ELEM_CALL: {
@@ -812,11 +859,11 @@ static void tpl_execute(wsr_tpl_ctx_t* ctx, wsr_tpl_t* tpl, dict(html_t*)* parti
             bool truthy;
             if (elem.partial_key.len > 0) {
                 html_t** partial = dict_read(partials, html_t*, elem.partial_key);
-                assert(!elem.has_cmp);
+                assert(!elem.has_jval);
                 truthy = (partial != 0 && partial_has_content(*partial));
             } else {
                 json_value_t jv = wsr_jdata_get(jdata, elem.jkey_get);
-                truthy = elem.has_cmp? json_cmp(jv, elem.cmp_v): !json_is_empty(jv);
+                truthy = elem.has_jval? json_cmp(jv, elem.jval): !json_is_empty(jv);
             }
             if (truthy) {
                 tpl_execute(ctx, elem.tpl, partials, inlines, jdata, buf, tpl_path, arg_ptr);
@@ -839,8 +886,11 @@ static void tpl_execute(wsr_tpl_ctx_t* ctx, wsr_tpl_t* tpl, dict(html_t*)* parti
                 }
             }
             break;
+        } case WSR_ELEM_SET: {
+            json_value_t value = (elem.has_jval? elem.jval: wsr_jdata_get(jdata, elem.jkey_get));
+            wsr_jdata_put(jdata, elem.jkey_setk, value);
+            break;
         } case WSR_ELEM_CALL: {
-            DBGFN("has wsr call [", elem.jkey_setk, "] [", elem.jkey_get, "] [", arg_ptr, "]");
             json_value_t value = elem.tpl_cb(elem.jkey_get, jdata, arg_ptr);
             wsr_jdata_put(jdata, elem.jkey_setk, value);
             break;
