@@ -291,8 +291,9 @@ static void inner_compile_tpl(wsr_tpl_ctx_t* ctx, dict(wsr_tpl_t*)* partials, fs
         fstr_t html, tpl_tag;
         {
             fstr_t tpl_tail = tpl;
-            #pragma re2c(tpl): ^ (.*){html}  \
-                [\{] ([\.!\$@/#]+ [^\{\}]+){tpl_tag} [\}] {@m_start_tag}
+            #pragma re2c(tpl): \
+                  ^ (.*){html} [\{]      ([\.!\$@/#]+ [^\{\}]+){tpl_tag}      [\}] {@m_start_tag} \
+                | ^ (.*){html} [\{] [\|] ([\.!\$@/#]+ .+      ){tpl_tag} [\|] [\}] {@m_start_tag}
             html = tpl_tail;
             tpl_tag = "";
             m_start_tag:;
