@@ -412,13 +412,7 @@ static void inner_compile_tpl(wsr_tpl_ctx_t* ctx, dict(wsr_tpl_t*)* partials, fs
                 .partial_key = se.inl.partial_key,
                 .virt_tpl = v_tpl,
             };
-            // Inline blocks are always pushed to the start of the template
-            // and executed first to prevent their position from having any
-            // semantic meaning. This makes templates easier to read and
-            // structure. A grammar where inlines is ordered is almost useless
-            // and would only serve as an anti pattern, mostly because
-            // colliding inline keys appends and not replaces.
-            list_push_start(parts, tpl_part_t, part);
+            list_push_end(parts, tpl_part_t, part);
         // Begin an if.
         } else if (fstr_prefixes(tpl_tag, ".if:")) {
             fstr_t if_args;
@@ -570,12 +564,17 @@ static void inner_compile_tpl(wsr_tpl_ctx_t* ctx, dict(wsr_tpl_t*)* partials, fs
         // Begin a template callback request.
         // This statement is useful to allow the template to request the data it
         // needs to render allowing vastly less context to read and understand them.
-        } else if (fstr_prefixes(tpl_tag, ".call:@")) {
+        } else if (fstr_prefixes(tpl_tag, ".call:")) {
             fstr_t call_tag_args;
-            fstr_divide(tpl_tag, ".call:@", 0, &call_tag_args);
+            fstr_divide(tpl_tag, ".call:", 0, &call_tag_args);
             fstr_t result_jkey, call_fn_arg;
             if (!fstr_divide(call_tag_args, ":", &result_jkey, &call_fn_arg))
                 throw_invalid_tag(tpl_id, tpl_tag);
+            if (result_jkey.len > 0) {
+                if (!fstr_prefixes(result_jkey, "@"))
+                    throw_invalid_tag(tpl_id, tpl_tag);
+                result_jkey = fstr_slice(result_jkey, 1, -1);
+            }
             fstr_t call_fn, call_arg;
             if (!fstr_divide(call_fn_arg, ":", &call_fn, &call_arg))
                 throw_invalid_tag(tpl_id, tpl_tag);
@@ -893,7 +892,8 @@ static void tpl_execute(wsr_tpl_ctx_t* ctx, wsr_tpl_t* tpl, dict(html_t*)* parti
             break;
         } case WSR_ELEM_CALL: {
             json_value_t value = elem.tpl_cb(elem.jkey_get, jdata, arg_ptr);
-            wsr_jdata_put(jdata, elem.jkey_setk, value);
+            if (elem.jkey_setk.len > 0)
+                wsr_jdata_put(jdata, elem.jkey_setk, value);
             break;
         }}
     }
