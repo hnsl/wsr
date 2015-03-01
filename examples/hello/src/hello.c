@@ -201,35 +201,35 @@ fstr_t serial_method(wsr_method_t method) {
     }
 }
 
-static wsr_rsp_t http_echo(wsr_req_t req) {
+static wsr_rsp_t* http_echo(wsr_req_t* req) {
     list(fstr_t)* li = new_list(fstr_t);
     list_push_end(li, fstr_t, "<!DOCTYPE html><plaintext style='white-space: pre-wrap'>");
-    list_push_end(li, fstr_t, concs("Method: ", serial_method(req.method), "\n"));
-    list_push_end(li, fstr_t, concs("Path: ", req.path, "\n"));
+    list_push_end(li, fstr_t, concs("Method: ", serial_method(req->method), "\n"));
+    list_push_end(li, fstr_t, concs("Path: ", req->path, "\n"));
     list_push_end(li, fstr_t, "\n** Headers:");
-    dict_foreach(req.headers, fstr_t, key, value) {
+    dict_foreach(req->headers, fstr_t, key, value) {
         list_push_end(li, fstr_t, "\n - ");
         list_push_end(li, fstr_t, key);
         list_push_end(li, fstr_t, ": ");
         list_push_end(li, fstr_t, value);
     }
     list_push_end(li, fstr_t, "\n** URL parameters:");
-    dict_foreach(req.url_params, fstr_t, key, value) {
+    dict_foreach(req->url_params, fstr_t, key, value) {
         list_push_end(li, fstr_t, "\n - ");
         list_push_end(li, fstr_t, key);
         list_push_end(li, fstr_t, ": ");
         list_push_end(li, fstr_t, value);
     }
-    if (req.method == METHOD_POST) {
+    if (req->method == METHOD_POST) {
         list_push_end(li, fstr_t, "\n** POST parameters:");
-        dict_foreach(req.post_params, fstr_t, key, value) {
+        dict_foreach(req->post_params, fstr_t, key, value) {
             list_push_end(li, fstr_t, "\n - ");
             list_push_end(li, fstr_t, key);
             list_push_end(li, fstr_t, ": ");
             list_push_end(li, fstr_t, value);
         }
         list_push_end(li, fstr_t, "\n** POST files:");
-        dict_foreach(req.post_file_data, wsr_post_file_data_t, key, value) {
+        dict_foreach(req->post_file_data, wsr_post_file_data_t, key, value) {
             list_push_end(li, fstr_t, "\n - ");
             list_push_end(li, fstr_t, key);
             list_push_end(li, fstr_t, ": ");
@@ -244,20 +244,20 @@ static wsr_rsp_t http_echo(wsr_req_t req) {
     return wsr_response_dynamic(HTTP_OK, resp, wsr_mime_html);
 }
 
-static wsr_rsp_t http_request_cb(wsr_req_t req, void* cb_arg) {
-    if (fstr_equal(req.path, "/") || fstr_equal(req.path, "/prefetch"))
-        req.path = "/index.html";
-    if (fstr_equal(req.path, "/lol"))
+static wsr_rsp_t* http_request_cb(wsr_req_t* req, void* cb_arg) {
+    if (fstr_equal(req->path, "/") || fstr_equal(req->path, "/prefetch"))
+        req->path = "/index.html";
+    if (fstr_equal(req->path, "/lol"))
         return wsr_response_static(HTTP_OK, "<h1>this is a lol page</h1>", wsr_mime_txt);
-    if (fstr_equal(req.path, "/echo")) {
+    if (fstr_equal(req->path, "/echo")) {
         if (wsr_req_is_ws_open(req))
             return wsr_response_web_socket(req, ws_echo, "", cb_arg);
         else
             return http_echo(req);
     }
-    if (fstr_equal(req.path, "/echo_json"))
+    if (fstr_equal(req->path, "/echo_json"))
         return wsr_response_web_socket(req, ws_echo_json, "", cb_arg);
-    if (fstr_equal(req.path, "/chat"))
+    if (fstr_equal(req->path, "/chat"))
         return wsr_response_web_socket(req, ws_chat, "", cb_arg);
     return wsr_response_file(req, web_root);
 }
@@ -276,7 +276,7 @@ void rcd_main(list(fstr_t)* main_args, list(fstr_t)* main_env) {
         chat_fid = sfid(spawn_fiber(chat_fiber("")));
     }
     wsr_cfg_t cfg = wsr_default_cfg();
-    cfg.bind.port = 8766;
+    cfg.bind = new_list(rio_in_addr4_t, {.port = 8766});
     cfg.req_cb = http_request_cb;
     req_arg_t arg = {
         .chat_fid = chat_fid,
