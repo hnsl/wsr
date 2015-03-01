@@ -259,7 +259,7 @@ void wsr_response_add_cookie(wsr_rsp_t* rsp, wsr_set_cookie_t set_cookie);
 /// Listens to specified socket and spawns a new static unsynchronized fiber
 /// for each connection that calls the configured callback handlers.
 /// This function never returns. Throws io exception on various io failures.
-void wsr_start(wsr_cfg_t cfg);
+noret void wsr_start(wsr_cfg_t cfg);
 
 /// Returns a simple response without a body.
 wsr_rsp_t* wsr_response(wsr_status_t status);
