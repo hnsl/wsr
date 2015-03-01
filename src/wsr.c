@@ -463,6 +463,8 @@ static wss_cb_arg_t http_session(rio_t* client_h, wsr_cfg_t cfg, rio_in_addr4_t 
                 req.post_params = new_dict(fstr_t);
                 req.post_file_data = new_dict(wsr_post_file_data_t);
                 decode_multipart_formdata(client_h, req.post_body, multipart_boundary, req.post_params, req.post_file_data);
+            } else {
+                req.post_params = new_dict(fstr_t);
             }
         } else {
             if (content_length != 0 || dict_read(req.headers, fstr_t, "transfer-encoding") != 0) {
