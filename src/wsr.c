@@ -473,6 +473,8 @@ static wss_cb_arg_t http_session(rio_t* client_h, wsr_cfg_t cfg, rio_in_addr4_t 
                 throw("content-length and transfer-encoding only supported for POST requests", exception_io);
             }
         }
+        // Create heap to escape web socket session data.
+        req.wss_heap = lwt_alloc_heap();
         // Pass request to callback and get response.
         wsr_rsp_t* rsp = cfg.req_cb(&req, cfg.cb_arg);
         // Handle possible web socket upgrade.
@@ -497,6 +499,8 @@ static wss_cb_arg_t http_session(rio_t* client_h, wsr_cfg_t cfg, rio_in_addr4_t 
                 "\r\n"
             );
             rio_write(client_h, header);
+            // Escape the web socket session heap and return with web socket callback.
+            lwt_alloc_escape(req.wss_heap);
             return (wss_cb_arg_t) {.wss_cb = rsp->wss_cb, .cb_arg = rsp->cb_arg};
         }
         // Compile and send raw head to client.
@@ -795,13 +799,11 @@ fiber_main_t(wssr) web_socket_reader(fiber_main_attr, wss_read_arg_t read_arg) {
     auto_accept_join(web_socket_read, join_server_params, read_arg);
 } catch (exception_desync, e); }
 
-static void web_socket_session(rio_t* client_h, wss_cb_arg_t wss_cb) { sub_heap {
-    rio_in_addr4_t peer;
+static void web_socket_session(rio_t* client_h, rio_in_addr4_t local_addr, rio_in_addr4_t remote_addr, wss_cb_arg_t wss_cb) { sub_heap {
     sf(wssw)* writer_sf;
     sf(wssr)* reader_sf;
     sub_heap {
-        peer = rio_get_socket_address(client_h, true);
-        fstr_t fiber_name = fss(rio_serial_in_addr4(peer));
+        fstr_t fiber_name = fss(rio_serial_in_addr4(remote_addr));
         rio_t *client_r, *client_w;
         rio_realloc_split(client_h, &client_r, &client_w);
         fmitosis {
@@ -816,14 +818,14 @@ static void web_socket_session(rio_t* client_h, wss_cb_arg_t wss_cb) { sub_heap 
         }
         escape_list(writer_sf, reader_sf);
     }
-    wss_cb.wss_cb(peer, reader_sf, writer_sf, wss_cb.cb_arg);
+    wss_cb.wss_cb(remote_addr, reader_sf, writer_sf, wss_cb.cb_arg);
 }}
 
 fiber_main http_connection_fiber(fiber_main_attr, rio_t* client_h, wsr_cfg_t cfg, rio_in_addr4_t local_addr, rio_in_addr4_t remote_addr, void* conn_data) { try {
     // Handle http session until it upgrades to a web socket session.
     wss_cb_arg_t wss_cb = http_session(client_h, cfg, local_addr, remote_addr, conn_data);
     // Handle web socket session.
-    web_socket_session(client_h, wss_cb);
+    web_socket_session(client_h, local_addr, remote_addr, wss_cb);
 } catch (exception_io | exception_desync, e) {
     //DBGE(e);
 }}

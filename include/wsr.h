@@ -51,6 +51,8 @@ typedef struct wsr_req {
     dict(fstr_t)* post_params;
     /// Parsed file data (uploads) sent with post.
     dict(wsr_post_file_data_t)* post_file_data;
+    /// Heap for data to pass to a web socket session.
+    lwt_heap_t* wss_heap;
     /// Additional connection data set by the application in the connection callback.
     void* conn_data;
 } wsr_req_t;
