@@ -85,16 +85,16 @@ typedef struct wsr_rsp {
     dict(fstr_t)* headers;
     /// Set-Cookie is special and constructed internally.
     list(wsr_set_cookie_t)* set_cookies;
-    /// If request should trigger a web socket connection, this is the
+    /// When request should trigger a web socket connection, this is the
     /// corresponding callback for the web socket session, otherwise 0.
     wsr_wss_cb_t wss_cb;
-    /// If wss_cb is not 0, the selected web socket protocol to use.
+    /// When wss_cb is not 0, the selected web socket protocol to use.
     fstr_t ws_protocol;
-    /// If wss_cb is 0, response body stream, otherwise undefined.
+    /// When wss_cb is 0, response body stream, otherwise undefined.
     rio_t* body_stream;
-    /// If body_stream is 0, the rendered html page, otherwise undefined.
+    /// When body_stream is 0, the rendered html page, otherwise undefined.
     struct html* html;
-    /// If html is 0, response body blob, otherwise undefined.
+    /// When html is 0, response body blob, otherwise undefined.
     fstr_t body_blob;
     /// Extra argument passed to callback.
     void* cb_arg;
