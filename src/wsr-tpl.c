@@ -811,6 +811,11 @@ static bool partial_has_content(html_t* partial) {
     return false;
 }
 
+static bool tpl_if_partial(dict(html_t*)* partial_index, fstr_t partial_key) {
+    html_t** partial = dict_read(partial_index, html_t*, partial_key);
+    return (partial != 0 && partial_has_content(*partial));
+}
+
 static void tpl_execute(wsr_tpl_ctx_t* ctx, wsr_tpl_t* tpl, dict(html_t*)* partials, dict(html_t*)* inlines, json_value_t jdata, html_t* buf, fstr_t tpl_path, void* arg_ptr) {
     for (size_t i = 0; i < tpl->n_elems; i++) {
         wsr_elem_t elem = tpl->elems[i];
@@ -858,9 +863,8 @@ static void tpl_execute(wsr_tpl_ctx_t* ctx, wsr_tpl_t* tpl, dict(html_t*)* parti
         } case WSR_ELEM_IF: {
             bool truthy;
             if (elem.partial_key.len > 0) {
-                html_t** partial = dict_read(partials, html_t*, elem.partial_key);
                 assert(!elem.has_jval);
-                truthy = (partial != 0 && partial_has_content(*partial));
+                truthy = tpl_if_partial(partials, elem.partial_key) || tpl_if_partial(inlines, elem.partial_key);
             } else {
                 json_value_t jv = wsr_jdata_get(jdata, elem.jkey_get);
                 truthy = elem.has_jval? json_cmp(jv, elem.jval): !json_is_empty(jv);
