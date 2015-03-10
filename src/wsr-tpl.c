@@ -778,15 +778,26 @@ static html_t* new_inline_buf(dict(html_t*)* inlines, fstr_t partial_key) {
     }
 }
 
-json_value_t wsr_jdata_get(json_value_t jdata, fstr_t jkey) {
+static json_value_t wsr_jdata_get_raw(json_value_t jdata, fstr_t jkey, bool objinit) {
     if (jkey.len == 0)
         return jnull;
     for (fstr_t jkey_part; fstr_iterate_trim(&jkey, ".", &jkey_part);) {
-        jdata = JSON_LREF(jdata, jkey_part);
-        if (jdata.type == JSON_NULL)
-            return jnull;
+        json_value_t child = JSON_LREF(jdata, jkey_part);
+        if (child.type == JSON_NULL) {
+            if (objinit) {
+                child = jobj_new();
+                JSON_SET(jdata, jkey_part, child);
+            } else {
+                return jnull;
+            }
+        }
+        jdata = child;
     }
     return jdata;
+}
+
+json_value_t wsr_jdata_get(json_value_t jdata, fstr_t jkey) {
+    return wsr_jdata_get_raw(jdata, jkey, false);
 }
 
 void wsr_jdata_put(json_value_t jdata, fstr_t jkey, json_value_t val) {
@@ -794,7 +805,7 @@ void wsr_jdata_put(json_value_t jdata, fstr_t jkey, json_value_t val) {
         return;
     fstr_t g_jkey, s_key;
     if (fstr_rdivide(jkey, ".", &g_jkey, &s_key)) {
-        jdata = wsr_jdata_get(jdata, g_jkey);
+        jdata = wsr_jdata_get_raw(jdata, g_jkey, true);
     } else {
         s_key = jkey;
     }
