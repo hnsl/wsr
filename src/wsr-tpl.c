@@ -918,6 +918,10 @@ void wsr_tpl_render_jd(wsr_tpl_ctx_t* ctx, fstr_t tpl_path, dict(html_t*)* parti
     DBGFN("[", tpl_path, "]: ", jdata);
     wsr_tpl_t* template = ctx->precompile? get_compiled_tpl(ctx->precompiled_partials, tpl_path): get_tpl_from_file(ctx, 0, tpl_path);
     dict(html_t*)* inlines = new_dict(html_t*);
+    if (jdata.type != JSON_OBJECT) {
+        // We cannot understand jdata other than object, force object.
+        jdata = jobj_new();
+    }
     tpl_execute(ctx, template, partials, inlines, jdata, buf, tpl_path, arg_ptr);
 }
 
