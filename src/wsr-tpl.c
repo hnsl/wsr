@@ -811,6 +811,11 @@ void wsr_jdata_put(json_value_t jdata, fstr_t jkey, json_value_t val) {
     }
     if (jdata.type != JSON_OBJECT)
         return;
+    if (val.type == JSON_OBJECT) {
+        // Deep copy object to get rid of remote heap references.
+        // This is required arguable due to a design issue in librcd.
+        val = json_clone(val, false);
+    }
     JSON_SET(jdata, s_key, val);
 }
 
