@@ -420,16 +420,24 @@ static void inner_compile_tpl(wsr_tpl_ctx_t* ctx, dict(wsr_tpl_t*)* partials, fs
             stack_elem_t se = {.class = STACKED_IF, .ife.pre_else_vt = 0};
             fstr_t var_arg, cmp_arg;
             if (fstr_divide(if_args, ":", &var_arg, &cmp_arg)) {
-                // Have if comparision argument. This should be a json literal.
+                // Have if comparison argument.
                 se.ife.has_jval = true;
-                try {
-                    se.ife.jval = json_parse(cmp_arg)->value;
-                } catch_eio (json_parse, e, ev) {
-                    throw_eio_fwd(concs("failed to parse if cmp expr [", cmp_arg, "]"), wsr_tpl_invalid, e);
+                fstr_t ns_hint = fstr_slice(cmp_arg, 0, 1);
+                if (fstr_equal(ns_hint, "@")) {
+                    // Wrap reference in array.
+                    se.ife.jval = jarr_new(jstr(fstr_slice(cmp_arg, 1, -1)));
+                } else {
+                    // Static value.
+                    try {
+                        se.ife.jval = json_parse(cmp_arg)->value;
+                    } catch_eio (json_parse, e, ev) {
+                        throw_eio_fwd(concs("failed to parse if cmp expr [", cmp_arg, "]"), wsr_tpl_invalid, e);
+                    }
+                    if (se.ife.jval.type == JSON_ARRAY || se.ife.jval.type == JSON_OBJECT)
+                        throw_eio("comparing with array or object type is unsupported", wsr_tpl_invalid);
                 }
-                if (se.ife.jval.type == JSON_ARRAY || se.ife.jval.type == JSON_OBJECT)
-                    throw_eio("comparing with array or object type is unsupported", wsr_tpl_invalid);
             } else {
+                // Have no comparison argument. Pure truthy check.
                 se.ife.has_jval = false;
                 var_arg = if_args;
             }
@@ -883,7 +891,20 @@ static void tpl_execute(wsr_tpl_ctx_t* ctx, wsr_tpl_t* tpl, dict(html_t*)* parti
                 truthy = tpl_if_partial(partials, elem.partial_key) || tpl_if_partial(inlines, elem.partial_key);
             } else {
                 json_value_t jv = wsr_jdata_get(jdata, elem.jkey_get);
-                truthy = elem.has_jval? json_cmp(jv, elem.jval): !json_is_empty(jv);
+                if (elem.has_jval) {
+                    json_value_t jv2;
+                    if (elem.jval.type == JSON_ARRAY) {
+                        // Resolve dynamic reference.
+                        fstr_t key = jstrv(list_peek_start(elem.jval.array_value, json_value_t));
+                        jv2 = wsr_jdata_get(jdata, key);
+                    } else {
+                        // Static reference.
+                        jv2 = elem.jval;
+                    }
+                    truthy = json_cmp(jv, jv2);
+                } else {
+                    truthy = !json_is_empty(jv);
+                }
             }
             if (truthy) {
                 tpl_execute(ctx, elem.tpl, partials, inlines, jdata, buf, tpl_path, arg_ptr);
