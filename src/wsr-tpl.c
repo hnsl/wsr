@@ -895,7 +895,7 @@ static void tpl_execute(wsr_tpl_ctx_t* ctx, wsr_tpl_t* tpl, dict(html_t*)* parti
                     json_value_t jv2;
                     if (elem.jval.type == JSON_ARRAY) {
                         // Resolve dynamic reference.
-                        fstr_t key = jstrv(list_peek_start(elem.jval.array_value, json_value_t));
+                        fstr_t key = jstrv(vec_get(elem.jval.array_value, json_value_t, 0));
                         jv2 = wsr_jdata_get(jdata, key);
                     } else {
                         // Static reference.
@@ -915,7 +915,7 @@ static void tpl_execute(wsr_tpl_ctx_t* ctx, wsr_tpl_t* tpl, dict(html_t*)* parti
         } case WSR_ELEM_FOREACH: {
             json_value_t value = wsr_jdata_get(jdata, elem.jkey_get);
             if (value.type == JSON_ARRAY) {
-                list_foreach(value.array_value, json_value_t, value) {
+                vec_foreach(value.array_value, json_value_t, i, value) {
                     wsr_jdata_put(jdata, elem.jkey_setv, value);
                     tpl_execute(ctx, elem.tpl, partials, inlines, jdata, buf, tpl_path, arg_ptr);
                 }
