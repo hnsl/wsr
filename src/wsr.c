@@ -548,13 +548,13 @@ static wss_cb_arg_t http_session(rio_t* client_h, wsr_cfg_t cfg, rio_in_addr4_t 
                 bool more_hint;
                 fstr_t chunk;
                 try {
+                    // In case this read throws an i/o exception we will terminate the HTTP stream
+                    // abruptly by leaking the exception, letting the client know something went wrong.
                     chunk = rio_read_part(rsp->body_stream, body_buf, &more_hint);
-                } catch (exception_io, e) {
-                    // Assuming end of response stream. We don't expose i/o errors to the web client yet.
+                } catch_eio(rio_eos, e) {
+                    // End of response stream.
                     goto end_of_chunked_body;
                 }
-                if (chunk.len == 0)
-                    goto end_of_chunked_body;
                 // Write the chunk init line.
                 sub_heap {
                     fstr_t chunk_init_line = concs(fss(fstr_from_uint(chunk.len, 16)), "\r\n");
