@@ -790,13 +790,28 @@ static json_value_t wsr_jdata_get_raw(json_value_t jdata, fstr_t jkey, bool obji
     if (jkey.len == 0)
         return jnull;
     for (fstr_t jkey_part; fstr_iterate_trim(&jkey, ".", &jkey_part);) {
-        json_value_t child = JSON_LREF(jdata, jkey_part);
-        if (child.type == JSON_NULL) {
-            if (objinit) {
-                child = jobj_new();
-                JSON_SET(jdata, jkey_part, child);
+        json_value_t child;
+        if (jdata.type == JSON_ARRAY) {
+            size_t n = fs2ui(jkey_part);
+            if (n >= vec_count(jdata.array_value, json_value_t)) {
+                if (objinit) {
+                    child = jobj_new();
+                    vec_set(jdata.array_value, json_value_t, n, child);
+                } else {
+                    return jnull;
+                }
             } else {
-                return jnull;
+                child = vec_get(jdata.array_value, json_value_t, n);
+            }
+        } else {
+            child = JSON_LREF(jdata, jkey_part);
+            if (child.type == JSON_NULL) {
+                if (objinit) {
+                    child = jobj_new();
+                    JSON_SET(jdata, jkey_part, child);
+                } else {
+                    return jnull;
+                }
             }
         }
         jdata = child;
